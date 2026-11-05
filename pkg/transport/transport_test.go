@@ -72,7 +72,14 @@ func TestServer(t *testing.T) {
 		{name: "network timeout", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: timeoutError{}, wantStatus: http.StatusGatewayTimeout, wantCalls: 1},
 		{name: "teams unreachable", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: errors.New("sending to Teams failed: connection refused"), wantStatus: http.StatusBadGateway, wantCalls: 1},
 		{name: "GET on the webhook path", method: http.MethodGet, path: webhookPath, wantStatus: http.StatusMethodNotAllowed},
+		// No CORS preflight answer: browsers are not clients of this service.
+		{name: "OPTIONS on the webhook path", method: http.MethodOptions, path: webhookPath, wantStatus: http.StatusMethodNotAllowed},
 		{name: "unknown path", method: http.MethodPost, path: "/other", body: string(validMessage), wantStatus: http.StatusNotFound},
+		{name: "trailing slash is another path", method: http.MethodPost, path: webhookPath + "/", body: string(validMessage), wantStatus: http.StatusNotFound},
+		// http.ServeMux cleans the path: "//", "/./" or "/../" in it are
+		// answered with a redirect to the clean path. 307 keeps the method
+		// and the body, so a client that follows it still delivers.
+		{name: "unclean path is redirected", method: http.MethodPost, path: "/" + webhookPath, body: string(validMessage), wantStatus: http.StatusTemporaryRedirect},
 
 		// Endpoints of the upstream program that must not exist any more.
 		{name: "no dynamic webhook", method: http.MethodPost, path: "/_dynamicwebhook/example.org/x", body: string(validMessage), wantStatus: http.StatusNotFound},
@@ -81,6 +88,9 @@ func TestServer(t *testing.T) {
 
 		{name: "liveness", method: http.MethodGet, path: "/-/healthy", wantStatus: http.StatusOK},
 		{name: "readiness", method: http.MethodGet, path: "/-/ready", wantStatus: http.StatusOK},
+		// A GET pattern in http.ServeMux serves HEAD too.
+		{name: "liveness with HEAD", method: http.MethodHead, path: "/-/healthy", wantStatus: http.StatusOK},
+		{name: "POST on a health check", method: http.MethodPost, path: "/-/healthy", wantStatus: http.StatusMethodNotAllowed},
 	}
 
 	for _, tt := range tests {

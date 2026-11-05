@@ -36,20 +36,18 @@ linters:
         main:
           allow:
             - $gostd
-            - github.com/go-kit/kit/log
+            - github.com/aursu/prometheus-msteams
             - github.com/google/go-cmp/cmp
             - github.com/hashicorp/go-retryablehttp
+            - github.com/Masterminds/sprig/v3
             - github.com/oklog/run
             - github.com/peterbourgon/ff/v3
             - github.com/prometheus/alertmanager/notify/webhook
             - github.com/prometheus/alertmanager/template
             - github.com/prometheus/client_golang/prometheus
-            - github.com/aursu/prometheus-msteams
+            - github.com/santhosh-tekuri/jsonschema/v6
             - go.yaml.in/yaml/v3
-            - github.com/Masterminds/sprig/v3
-    errcheck:
-      exclude-functions:
-        - (github.com/go-kit/kit/log.Logger).Log
+            - golang.org/x/text
   exclusions:
     rules:
       - linters:
@@ -58,10 +56,6 @@ linters:
       - linters:
           - staticcheck
         text: "ST1003: should not use ALL_CAPS in Go names"
-      - linters:
-          - gosec
-        text: "G104"
-        source: '\.Log\('
       - path: _test\.go
         linters:
           - gocyclo

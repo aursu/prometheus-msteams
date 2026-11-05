@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,7 +16,6 @@ import (
 	"github.com/aursu/prometheus-msteams/pkg/service"
 	"github.com/aursu/prometheus-msteams/pkg/testutils"
 	"github.com/aursu/prometheus-msteams/pkg/transport"
-	"github.com/go-kit/kit/log"
 )
 
 var update = flag.Bool("update", false, "update .golden files")
@@ -33,13 +33,13 @@ func TestServer(t *testing.T) {
 
 	c := card.NewTemplatedCardCreator(tmpl, false)
 
-	logger := log.NewJSONLogger(log.NewSyncWriter(os.Stderr))
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
 	// Create a dummy Microsoft teams server.
 	teamsSrv := httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			b, _ := io.ReadAll(r.Body)
-			logger.Log("request", string(b))
+			logger.Info("teams received", "request", string(b))
 			w.WriteHeader(200)
 			_, _ = w.Write([]byte("1"))
 		}),

@@ -7,12 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
 	"github.com/prometheus/alertmanager/notify/webhook"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -63,13 +62,13 @@ func withMetrics(path string, next http.Handler) http.Handler {
 // The routing is Go's own http.ServeMux: since Go 1.22 its patterns name the
 // method too ("POST /alertmanager"), and it answers 404 and 405 by itself.
 // The caller can add more patterns to the returned mux.
-func NewServer(logger log.Logger, routes []Route) (*http.ServeMux, error) {
+func NewServer(logger *slog.Logger, routes []Route) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
 	for _, r := range routes {
 		if err := checkRequestPath(r.RequestPath); err != nil {
 			return nil, err
 		}
-		level.Debug(logger).Log("request_path_added", r.RequestPath)
+		logger.Debug("route added", "request_path", r.RequestPath)
 		// Each layer wraps the next one: the log line is written after the
 		// request went through the metrics and the handler.
 		h := withRequestLog(logger, withMetrics(r.RequestPath, alertHandler(r.Service, logger)))
@@ -119,12 +118,12 @@ func (r *statusRecorder) WriteHeader(code int) {
 }
 
 // withRequestLog writes one log line per request, after it was handled.
-func withRequestLog(logger log.Logger, next http.Handler) http.Handler {
+func withRequestLog(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		begin := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		logger.Log(
+		logger.Info("request",
 			"method", r.Method,
 			"uri", r.RequestURI,
 			"host", r.Host,
@@ -139,27 +138,27 @@ func withRequestLog(logger log.Logger, next http.Handler) http.Handler {
 // retries a 5xx later, but not a 4xx (it counts that notification as
 // failed). A malformed request is answered 400, since sending the same bytes
 // again cannot succeed; a failed delivery as statusFor decides.
-func alertHandler(s service.Service, logger log.Logger) http.Handler {
+func alertHandler(s service.Service, logger *slog.Logger) http.Handler {
 	// A function literal with the right signature becomes an http.Handler
 	// through the conversion http.HandlerFunc(...).
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, err := io.ReadAll(r.Body)
 		if err != nil {
-			logger.Log("err", err)
+			logger.Error("cannot read the request", "err", err)
 			reply(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
 		var wm webhook.Message
 		if err := json.Unmarshal(b, &wm); err != nil {
-			logger.Log("err", err)
+			logger.Warn("request is not JSON", "err", err)
 			reply(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
 		if wm.Data == nil || wm.Version == "" || wm.GroupKey == "" {
 			err = fmt.Errorf("the webhook message does not seem to be a valid Prometheus Alertmanager webhook. More information see https://prometheus.io/docs/alerting/latest/configuration/#webhook_config")
-			logger.Log("err", err)
+			logger.Warn("request is not an Alertmanager message", "err", err)
 			reply(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -167,7 +166,7 @@ func alertHandler(s service.Service, logger log.Logger) http.Handler {
 		prs, err := s.Post(r.Context(), wm)
 		if err != nil {
 			status := statusFor(err)
-			logger.Log("err", err, "status", status)
+			logger.Error("delivery failed", "err", err, "status", status)
 			// Alertmanager logs this text; it never contains the webhook URL.
 			reply(w, status, err.Error())
 			return
@@ -175,7 +174,7 @@ func alertHandler(s service.Service, logger log.Logger) http.Handler {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(prs); err != nil {
-			logger.Log("err", err)
+			logger.Error("cannot write the answer", "err", err)
 		}
 	})
 }

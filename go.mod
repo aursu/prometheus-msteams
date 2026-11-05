@@ -2,7 +2,6 @@ module github.com/aursu/prometheus-msteams
 
 require (
 	github.com/Masterminds/sprig/v3 v3.3.0
-	github.com/go-kit/kit v0.9.1-0.20191018122245-9f5354e50d79
 	github.com/google/go-cmp v0.7.0
 	github.com/hashicorp/go-retryablehttp v0.7.8
 	github.com/oklog/run v1.2.0
@@ -25,10 +24,8 @@ require (
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
-	github.com/go-logfmt/logfmt v0.5.1 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect

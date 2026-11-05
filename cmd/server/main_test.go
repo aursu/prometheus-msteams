@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"net/http"
 	"net/http/httptest"
@@ -195,5 +196,39 @@ func Test_parseTeamsConfigFile_invalid(t *testing.T) {
 	}
 	if _, err := parseTeamsConfigFile(f); err == nil {
 		t.Error("parseTeamsConfigFile() succeeded on invalid YAML")
+	}
+}
+
+// -log-format json and fmt; -debug lets debug lines through.
+func Test_newLogger(t *testing.T) {
+	tests := []struct {
+		format    string
+		debug     bool
+		wantInfo  string // what the info line must contain
+		wantDebug bool
+	}{
+		{format: "json", wantInfo: `"msg":"hello"`},
+		{format: "fmt", wantInfo: `msg=hello`},
+		{format: "fmt", debug: true, wantInfo: `msg=hello`, wantDebug: true},
+	}
+	for _, tt := range tests {
+		var buf bytes.Buffer
+		logger, err := newLogger(&buf, tt.format, tt.debug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		logger.Info("hello")
+		logger.Debug("details")
+
+		if !strings.Contains(buf.String(), tt.wantInfo) {
+			t.Errorf("%s: %q does not contain %q", tt.format, buf.String(), tt.wantInfo)
+		}
+		if got := strings.Contains(buf.String(), "details"); got != tt.wantDebug {
+			t.Errorf("%s, debug %t: debug line written %t, want %t", tt.format, tt.debug, got, tt.wantDebug)
+		}
+	}
+
+	if _, err := newLogger(&bytes.Buffer{}, "xml", false); err == nil {
+		t.Error("newLogger() accepted format xml")
 	}
 }

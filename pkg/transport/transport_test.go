@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/aursu/prometheus-msteams/pkg/service"
-	"github.com/go-kit/kit/log"
 	"github.com/prometheus/alertmanager/notify/webhook"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
@@ -87,7 +87,7 @@ func TestServer(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			svc := &fakeService{err: tt.serviceErr}
-			srv, err := NewServer(log.NewNopLogger(), []Route{{Service: svc, RequestPath: webhookPath}})
+			srv, err := NewServer(slog.New(slog.DiscardHandler), []Route{{Service: svc, RequestPath: webhookPath}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -113,7 +113,7 @@ func TestServer(t *testing.T) {
 // startup.
 func TestNewServer_rejectsPath(t *testing.T) {
 	for _, p := range []string{"alertmanager", "/alerts/{team}", "/a b", ""} {
-		if _, err := NewServer(log.NewNopLogger(), []Route{{Service: &fakeService{}, RequestPath: p}}); err == nil {
+		if _, err := NewServer(slog.New(slog.DiscardHandler), []Route{{Service: &fakeService{}, RequestPath: p}}); err == nil {
 			t.Errorf("NewServer() accepted request path %q", p)
 		}
 	}
@@ -123,7 +123,7 @@ func TestNewServer_rejectsPath(t *testing.T) {
 func TestServer_logsStatus(t *testing.T) {
 	var buf bytes.Buffer
 	svc := &fakeService{err: &service.TeamsError{StatusCode: http.StatusNotFound}}
-	srv, err := NewServer(log.NewLogfmtLogger(&buf), []Route{{Service: svc, RequestPath: "/alertmanager"}})
+	srv, err := NewServer(slog.New(slog.NewTextHandler(&buf, nil)), []Route{{Service: svc, RequestPath: "/alertmanager"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestServer_logsStatus(t *testing.T) {
 func TestServer_metrics(t *testing.T) {
 	const path = "/metrics-test" // a path of its own: the metrics are global
 	svc := &fakeService{err: &service.TeamsError{StatusCode: http.StatusNotFound}}
-	srv, err := NewServer(log.NewNopLogger(), []Route{{Service: svc, RequestPath: path}})
+	srv, err := NewServer(slog.New(slog.DiscardHandler), []Route{{Service: svc, RequestPath: path}})
 	if err != nil {
 		t.Fatal(err)
 	}

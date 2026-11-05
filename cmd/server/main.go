@@ -7,6 +7,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,8 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/oklog/run"
 	"github.com/peterbourgon/ff/v3"
@@ -261,38 +261,27 @@ func main() { //nolint: funlen
 		os.Exit(0)
 	}
 
-	// Logger.
-	var logger log.Logger
-	{
-		switch *logFormat {
-		case "json":
-			logger = log.NewJSONLogger(log.NewSyncWriter(os.Stdout))
-		case "fmt":
-			logger = log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
-		default:
-			fmt.Fprintf(os.Stderr, "log-format %s is not valid", *logFormat)
-			os.Exit(1)
-		}
-		if *debugLogs {
-			logger = level.NewFilter(logger, level.AllowDebug())
-		} else {
-			logger = level.NewFilter(logger, level.AllowInfo())
-		}
-		logger = log.With(logger, "ts", log.DefaultTimestamp, "caller", log.DefaultCaller)
+	logger, err := newLogger(os.Stderr, *logFormat, *debugLogs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	// fatal logs an error and stops the program; used for configuration
+	// errors at startup. (A function value assigned to a variable: Go's
+	// local helper functions are written this way.)
+	fatal := func(msg string, args ...any) {
+		logger.Error(msg, args...)
+		os.Exit(1)
 	}
 
 	// Prepare the Teams config.
-	var (
-		tc  PromTeamsConfig
-		err error
-	)
+	var tc PromTeamsConfig
 
 	// Parse the config file if defined.
 	if *configFile != "" {
 		tc, err = parseTeamsConfigFile(*configFile)
 		if err != nil {
-			logger.Log("err", err)
-			os.Exit(1)
+			fatal("cannot read the configuration file", "err", err)
 		}
 	}
 
@@ -301,12 +290,11 @@ func main() { //nolint: funlen
 	{
 		tmpl, err := card.ParseTemplateFile(*templateFile)
 		if err != nil {
-			logger.Log("err", err)
+			fatal("cannot read the template", "template_file", *templateFile, "err", err)
 		}
 		defaultConverter = card.NewTemplatedCardCreator(tmpl, *escapeUnderscores)
 		defaultConverter = card.NewCreatorLoggingMiddleware(
-			log.With(
-				logger,
+			logger.With(
 				"template_file", *templateFile,
 				"escaped_underscores", *escapeUnderscores,
 			),
@@ -340,8 +328,7 @@ func main() { //nolint: funlen
 		for uri, webhook := range c {
 			err := validateWebhook(webhook)
 			if *validateWebhookURL && err != nil {
-				logger.Log("err", err)
-				os.Exit(1)
+				fatal("invalid webhook URL", "request_path", uri, "err", err)
 			}
 
 			var r transport.Route
@@ -355,41 +342,28 @@ func main() { //nolint: funlen
 	// Connectors with custom template files.
 	for _, c := range tc.ConnectorsWithCustomTemplates {
 		if len(c.RequestPath) == 0 {
-			logger.Log("err", "one of the 'templated_connectors' is missing a 'request_path'")
-			os.Exit(1)
+			fatal("one of the connectors_with_custom_templates has no request_path")
 		}
 		if len(c.WebhookURL) == 0 {
-			logger.Log(
-				"err",
-				fmt.Sprintf("The webhook_url is required for request_path '%s'", c.RequestPath),
-			)
-			os.Exit(1)
+			fatal("webhook_url is required", "request_path", c.RequestPath)
 		}
 		err := validateWebhook(c.WebhookURL)
 		if *validateWebhookURL && err != nil {
-			logger.Log("err", err)
-			os.Exit(1)
+			fatal("invalid webhook URL", "request_path", c.RequestPath, "err", err)
 		}
 		if len(c.TemplateFile) == 0 {
-			logger.Log(
-				"err",
-				fmt.Sprintf("The template_file is required for request_path '%s'", c.RequestPath),
-			)
-			os.Exit(1)
+			fatal("template_file is required", "request_path", c.RequestPath)
 		}
 
 		var converter card.Converter
 		tmpl, err := card.ParseTemplateFile(c.TemplateFile)
 		if err != nil {
-			logger.Log("err", err)
-			os.Exit(1)
+			fatal("cannot read the template", "template_file", c.TemplateFile, "err", err)
 		}
 
-		// converter = card.NewTemplatedCardCreator(tmpl, c.EscapeUnderscores, c.DisableGrouping)
 		converter = card.NewTemplatedCardCreator(tmpl, c.EscapeUnderscores)
 		converter = card.NewCreatorLoggingMiddleware(
-			log.With(
-				logger,
+			logger.With(
 				"template_file", c.TemplateFile,
 				"escaped_underscores", c.EscapeUnderscores,
 			),
@@ -404,8 +378,7 @@ func main() { //nolint: funlen
 	}
 
 	if err := checkDuplicateRequestPath(routes); err != nil {
-		logger.Log("err", err)
-		os.Exit(1)
+		fatal("invalid configuration", "err", err)
 	}
 
 	// Prometheus msteams HTTP handler setup: the webhook routes and health
@@ -414,8 +387,7 @@ func main() { //nolint: funlen
 	// with their signatures, are gone.
 	handler, err := transport.NewServer(logger, routes)
 	if err != nil {
-		logger.Log("err", err)
-		os.Exit(1)
+		fatal("invalid configuration", "err", err)
 	}
 	// Prometheus metrics: those defined with promauto in this program, plus
 	// the Go runtime and process metrics the client library adds itself.
@@ -430,7 +402,7 @@ func main() { //nolint: funlen
 		}
 		g.Add(
 			func() error {
-				logger.Log(
+				logger.Info("listening",
 					"listen_http_addr", *httpAddr,
 					"version", version.VERSION,
 					"commit", version.COMMIT,
@@ -440,10 +412,8 @@ func main() { //nolint: funlen
 				return srv.ListenAndServe()
 			},
 			func(error) {
-				if err != http.ErrServerClosed {
-					if err := srv.Shutdown(context.Background()); err != nil {
-						logger.Log("err", err)
-					}
+				if err := srv.Shutdown(context.Background()); err != nil {
+					logger.Error("shutdown failed", "err", err)
 				}
 			},
 		)
@@ -451,7 +421,28 @@ func main() { //nolint: funlen
 	{
 		g.Add(run.SignalHandler(context.Background(), syscall.SIGINT, syscall.SIGTERM))
 	}
-	logger.Log("exit", g.Run())
+	logger.Info("exit", "reason", g.Run())
+}
+
+// newLogger creates the program's logger (log/slog from the standard
+// library). format is "json" (one JSON object per line) or "fmt" (key=value
+// text); debug also lets Debug messages through, which include every alert
+// and card in full. Each line carries the time, the level and the source
+// file and line it was logged from.
+func newLogger(w io.Writer, format string, debug bool) (*slog.Logger, error) {
+	level := slog.LevelInfo
+	if debug {
+		level = slog.LevelDebug
+	}
+	opts := &slog.HandlerOptions{Level: level, AddSource: true}
+	switch format {
+	case "json":
+		return slog.New(slog.NewJSONHandler(w, opts)), nil
+	case "fmt":
+		return slog.New(slog.NewTextHandler(w, opts)), nil
+	default:
+		return nil, fmt.Errorf("-log-format %q is not valid, want json or fmt", format)
+	}
 }
 
 func checkDuplicateRequestPath(routes []transport.Route) error {

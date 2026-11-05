@@ -5,9 +5,9 @@ package card
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
-	"github.com/go-kit/kit/log"
 	"github.com/prometheus/alertmanager/notify/webhook"
 )
 
@@ -27,24 +27,27 @@ type Converter interface {
 // loggingMiddleware wraps another Converter and logs every conversion
 // (decorator pattern).
 type loggingMiddleware struct {
-	logger log.Logger
+	logger *slog.Logger
 	next   Converter
 }
 
 // NewCreatorLoggingMiddleware creates a loggingMiddleware.
-func NewCreatorLoggingMiddleware(l log.Logger, n Converter) Converter {
+func NewCreatorLoggingMiddleware(l *slog.Logger, n Converter) Converter {
 	return loggingMiddleware{l, n}
 }
 
-// Convert calls the wrapped Converter and logs the alert, the resulting card
-// and how long the conversion took. The named results (c, err) let the
-// deferred function read them after the wrapped call has returned.
+// Convert calls the wrapped Converter and logs, at debug level only, the
+// alert, the resulting card and how long the conversion took: both hold the
+// full alert texts, too much and too private for every log line. The named
+// results (c, err) let the deferred function read them after the wrapped
+// call has returned.
 func (l loggingMiddleware) Convert(ctx context.Context, a webhook.Message) (c json.RawMessage, err error) {
 	// defer runs this function when Convert returns, whichever way it does.
 	defer func(begin time.Time) {
-		_ = l.logger.Log(
+		l.logger.Debug("card built",
 			"alert", a,
 			"card", string(c),
+			"err", err,
 			"took", time.Since(begin),
 		)
 	}(time.Now())

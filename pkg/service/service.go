@@ -13,7 +13,6 @@ import (
 
 	"github.com/aursu/prometheus-msteams/pkg/card"
 	"github.com/prometheus/alertmanager/notify/webhook"
-	"go.opencensus.io/trace"
 )
 
 // Only one kind of Teams webhook is supported: a Teams Workflow ("Post to a
@@ -86,9 +85,6 @@ func NewSimpleService(converter card.Converter, client *http.Client, webhookURL 
 // Post renders the alert group into an Adaptive Card and sends it to Teams.
 // On success it returns Teams' answer. A non-2xx answer is a *TeamsError.
 func (s simpleService) Post(ctx context.Context, wm webhook.Message) ([]PostResponse, error) {
-	ctx, span := trace.StartSpan(ctx, "simpleService.Post")
-	defer span.End()
-
 	c, err := s.converter.Convert(ctx, wm)
 	if err != nil {
 		// Two %w wrap both errors: the result "is" ErrCard and still
@@ -108,9 +104,6 @@ func (s simpleService) Post(ctx context.Context, wm webhook.Message) ([]PostResp
 // No error it returns contains the webhook URL: its query holds the
 // signature, and errors end up in logs and in the answer to Alertmanager.
 func (s simpleService) post(ctx context.Context, card json.RawMessage) (PostResponse, error) {
-	ctx, span := trace.StartSpan(ctx, "simpleService.post")
-	defer span.End()
-
 	// The limit rides on the context: WithTimeout derives a context that is
 	// cancelled when the time is up, and both the HTTP client and the retry
 	// client stop as soon as the request's context is cancelled. cancel

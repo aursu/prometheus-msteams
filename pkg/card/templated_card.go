@@ -12,7 +12,6 @@ import (
 	"github.com/Masterminds/sprig/v3"
 	"github.com/prometheus/alertmanager/notify/webhook"
 	"github.com/prometheus/alertmanager/template"
-	"go.opencensus.io/trace"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -55,10 +54,9 @@ func NewTemplatedCardCreator(template *template.Template, escapeUnderscores bool
 // that the result is a message Teams Workflows accept (see checkEnvelope) and
 // returns it compacted. Nothing is added to or removed from what the template
 // wrote. A bad template is an error here, before anything is sent to Teams.
-func (m *templatedCard) Convert(ctx context.Context, promAlert webhook.Message) (json.RawMessage, error) {
-	_, span := trace.StartSpan(ctx, "templatedCard.Convert")
-	defer span.End()
-
+// (The Converter interface passes a context; rendering does not use it, so
+// the parameter is named _, Go's name for "not used".)
+func (m *templatedCard) Convert(_ context.Context, promAlert webhook.Message) (json.RawMessage, error) {
 	cardString, err := m.executeTemplate(promAlert)
 	if err != nil {
 		return nil, err

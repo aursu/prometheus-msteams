@@ -15,26 +15,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 	"github.com/hashicorp/go-retryablehttp"
+	"github.com/oklog/run"
+	"github.com/peterbourgon/ff/v3"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.yaml.in/yaml/v3"
 
-	ocprometheus "contrib.go.opencensus.io/exporter/prometheus"
 	"github.com/aursu/prometheus-msteams/pkg/card"
 	"github.com/aursu/prometheus-msteams/pkg/service"
 	"github.com/aursu/prometheus-msteams/pkg/transport"
 	"github.com/aursu/prometheus-msteams/pkg/version"
-	stdprometheus "github.com/prometheus/client_golang/prometheus"
-
-	"contrib.go.opencensus.io/exporter/jaeger"
-	"go.opencensus.io/plugin/ochttp"
-	"go.opencensus.io/stats/view"
-	"go.opencensus.io/tag"
-	"go.opencensus.io/trace"
-
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
-	"github.com/oklog/run"
-	"github.com/peterbourgon/ff/v3"
-	"go.yaml.in/yaml/v3"
 )
 
 // PromTeamsConfig is the struct representation of the config file.
@@ -185,24 +179,41 @@ func newTeamsClient(o teamsClientOptions) *http.Client {
 	// up after N attempt(s)": the status code is lost and the URL leaks.
 	retryClient.ErrorHandler = retryablehttp.PassthroughErrorHandler
 	retryClient.RetryMax = o.retryMax
+	base := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          o.maxIdleConns,
+		IdleConnTimeout:       o.idleConnTimeout,
+		TLSHandshakeTimeout:   o.tlsHandshakeTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: o.insecureSkipVerify}, //nolint: gosec
+	}
+	// The metrics sit below the retry client, so every attempt is counted
+	// with the status Teams answered. A request that got no answer at all
+	// (connection refused, timeout) has no status and is not counted.
 	retryClient.HTTPClient = &http.Client{
-		Transport: &ochttp.Transport{
-			Base: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				MaxIdleConns:          o.maxIdleConns,
-				IdleConnTimeout:       o.idleConnTimeout,
-				TLSHandshakeTimeout:   o.tlsHandshakeTimeout,
-				ExpectContinueTimeout: 1 * time.Second,
-				TLSClientConfig:       &tls.Config{InsecureSkipVerify: o.insecureSkipVerify}, //nolint: gosec
-			},
-		},
+		Transport: promhttp.InstrumentRoundTripperCounter(teamsRequestsTotal,
+			promhttp.InstrumentRoundTripperDuration(teamsRequestDuration, base)),
 	}
 	return retryClient.StandardClient()
 }
+
+// Metrics of the requests to Teams, served on /metrics. The "code" label is
+// Teams' answer: 202 accepted; 400, 404, 413 refused; 429 throttled; 5xx.
+var (
+	teamsRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "prometheus_msteams_teams_requests_total",
+		Help: "Requests to Teams Workflows, every retry included, by answered status code.",
+	}, []string{"code"})
+	teamsRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "prometheus_msteams_teams_request_duration_seconds",
+		Help:    "Time until Teams answered a request.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{})
+)
 
 //nolint:gocyclo
 func main() { //nolint: funlen
@@ -211,8 +222,6 @@ func main() { //nolint: funlen
 		promVersion                   = fs.Bool("version", false, "Print the version")
 		logFormat                     = fs.String("log-format", "json", "json|fmt")
 		debugLogs                     = fs.Bool("debug", false, "Set log level to debug mode.")
-		jaegerTrace                   = fs.Bool("jaeger-trace", false, "Send traces to Jaeger.")
-		jaegerAgentAddr               = fs.String("jaeger-agent", "localhost:6831", "Jaeger agent endpoint")
 		httpAddr                      = fs.String("http-addr", ":2000", "HTTP listen address.")
 		requestURI                    = fs.String("teams-request-uri", "", "The default request URI path where Prometheus will post to.")
 		teamsWebhookURL               = fs.String("teams-incoming-webhook-url", "", "The default Microsoft Teams webhook connector.")
@@ -236,6 +245,10 @@ func main() { //nolint: funlen
 		// Kept only so that existing command lines with -workflow-webhook still
 		// start (an unknown flag stops the program); Workflow is always on now.
 		_ = fs.Bool("workflow-webhook", true, "Deprecated, ignored: Workflow webhooks are the only kind.")
+		// The same for the tracing flags: tracing to Jaeger was removed with
+		// the OpenCensus library it was built on.
+		_ = fs.Bool("jaeger-trace", false, "Deprecated, ignored: tracing was removed.")
+		_ = fs.String("jaeger-agent", "", "Deprecated, ignored: tracing was removed.")
 	)
 
 	if err := parseFlags(fs, os.Args[1:]); err != nil {
@@ -266,29 +279,6 @@ func main() { //nolint: funlen
 			logger = level.NewFilter(logger, level.AllowInfo())
 		}
 		logger = log.With(logger, "ts", log.DefaultTimestamp, "caller", log.DefaultCaller)
-	}
-
-	// Tracer.
-	if *jaegerTrace {
-		logger.Log("message", "jaeger tracing enabled")
-
-		je, err := jaeger.NewExporter(
-			jaeger.Options{
-				AgentEndpoint: *jaegerAgentAddr,
-				ServiceName:   "prometheus-msteams",
-			},
-		)
-		if err != nil {
-			logger.Log("err", err)
-			os.Exit(1)
-		}
-
-		trace.RegisterExporter(je)
-		trace.ApplyConfig(
-			trace.Config{
-				DefaultSampler: trace.AlwaysSample(),
-			},
-		)
 	}
 
 	// Prepare the Teams config.
@@ -418,20 +408,6 @@ func main() { //nolint: funlen
 		os.Exit(1)
 	}
 
-	pe, err := ocprometheus.NewExporter(
-		ocprometheus.Options{
-			Registry: stdprometheus.DefaultRegisterer.(*stdprometheus.Registry),
-		},
-	)
-	if err != nil {
-		logger.Log("err", err)
-		os.Exit(1)
-	}
-	if err := view.Register(ocviews()...); err != nil {
-		logger.Log("err", err)
-		os.Exit(1)
-	}
-
 	// Prometheus msteams HTTP handler setup: the webhook routes and health
 	// checks (transport.NewServer) plus the metrics. Nothing else is served:
 	// the profiler (/debug/pprof) and /config, which listed the Teams URLs
@@ -441,8 +417,9 @@ func main() { //nolint: funlen
 		logger.Log("err", err)
 		os.Exit(1)
 	}
-	// Prometheus metrics.
-	handler.Handle("GET /metrics", pe)
+	// Prometheus metrics: those defined with promauto in this program, plus
+	// the Go runtime and process metrics the client library adds itself.
+	handler.Handle("GET /metrics", promhttp.Handler())
 
 	var g run.Group
 	{
@@ -475,75 +452,6 @@ func main() { //nolint: funlen
 		g.Add(run.SignalHandler(context.Background(), syscall.SIGINT, syscall.SIGTERM))
 	}
 	logger.Log("exit", g.Run())
-}
-
-func ocviews() []*view.View {
-	clientKeys := []tag.Key{
-		ochttp.KeyClientMethod, ochttp.KeyClientStatus, ochttp.KeyClientHost, ochttp.KeyClientPath,
-	}
-	serverKeys := []tag.Key{
-		ochttp.StatusCode, ochttp.Method, ochttp.Path,
-	}
-	return []*view.View{
-		// HTTP client metrics.
-		{
-			Name:        "http/client/sent_bytes",
-			Measure:     ochttp.ClientSentBytes,
-			Aggregation: view.Distribution(1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304),
-			Description: "Total bytes sent in request body (not including headers), by HTTP method and response status",
-			TagKeys:     clientKeys,
-		},
-		{
-			Name:        "http/client/received_bytes",
-			Measure:     ochttp.ClientReceivedBytes,
-			Aggregation: view.Distribution(1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304),
-			Description: "Total bytes received in response bodies (not including headers but including error responses with bodies), by HTTP method and response status",
-			TagKeys:     clientKeys,
-		},
-		{
-			Name:        "http/client/roundtrip_latency",
-			Measure:     ochttp.ClientRoundtripLatency,
-			Aggregation: view.Distribution(1, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 25, 30),
-			Description: "End-to-end latency, by HTTP method and response status",
-			TagKeys:     clientKeys,
-		},
-		{
-			Name:        "http/client/completed_count",
-			Measure:     ochttp.ClientRoundtripLatency,
-			Aggregation: view.Count(),
-			Description: "Count of completed requests, by HTTP method and response status",
-			TagKeys:     clientKeys,
-		},
-		// HTTP server metrics.
-		{
-			Name:        "http/server/request_count",
-			Description: "Count of HTTP requests started",
-			Measure:     ochttp.ServerRequestCount,
-			Aggregation: view.Count(),
-			TagKeys:     serverKeys,
-		},
-		{
-			Name:        "http/server/request_bytes",
-			Description: "Size distribution of HTTP request body",
-			Measure:     ochttp.ServerRequestBytes,
-			Aggregation: view.Distribution(1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304),
-			TagKeys:     serverKeys,
-		},
-		{
-			Name:        "http/server/response_bytes",
-			Description: "Size distribution of HTTP response body",
-			Measure:     ochttp.ServerResponseBytes,
-			Aggregation: view.Distribution(1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304),
-			TagKeys:     serverKeys,
-		},
-		{
-			Name:        "http/server/latency",
-			Description: "Latency distribution of HTTP requests",
-			Measure:     ochttp.ServerLatency,
-			Aggregation: view.Distribution(1, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 25, 30),
-			TagKeys:     serverKeys,
-		},
-	}
 }
 
 func checkDuplicateRequestPath(routes []transport.Route) error {

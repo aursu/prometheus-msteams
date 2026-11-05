@@ -36,12 +36,6 @@ linters:
         main:
           allow:
             - $gostd
-            - contrib.go.opencensus.io/exporter/jaeger
-            - contrib.go.opencensus.io/exporter/prometheus
-            - go.opencensus.io/plugin/ochttp
-            - go.opencensus.io/stats/view
-            - go.opencensus.io/tag
-            - go.opencensus.io/trace
             - github.com/go-kit/kit/log
             - github.com/google/go-cmp/cmp
             - github.com/hashicorp/go-retryablehttp

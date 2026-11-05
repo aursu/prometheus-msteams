@@ -14,8 +14,9 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/prometheus/alertmanager/notify/webhook"
-	"go.opencensus.io/plugin/ochttp"
-	"go.opencensus.io/trace"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/aursu/prometheus-msteams/pkg/service"
 )
@@ -24,6 +25,31 @@ import (
 type Route struct {
 	Service     service.Service
 	RequestPath string
+}
+
+// Metrics of the webhook requests from Alertmanager, served on /metrics.
+// promauto registers each metric with Prometheus' default registry when the
+// program starts. The "code" label is the answer: 200 delivered, 422 / 502 /
+// 504 failed (see statusFor), 400 not an Alertmanager message.
+var (
+	requestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "prometheus_msteams_requests_total",
+		Help: "Webhook requests from Alertmanager, by request path and answered status code.",
+	}, []string{"handler", "code"})
+	requestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "prometheus_msteams_request_duration_seconds",
+		Help:    "Time to answer a webhook request from Alertmanager, Teams included, by request path.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"handler"})
+)
+
+// withMetrics counts the requests to one webhook path and times them, with
+// the helpers of the Prometheus client library. MustCurryWith fixes the
+// "handler" label to the path; the helpers fill in "code" themselves.
+func withMetrics(path string, next http.Handler) http.Handler {
+	labels := prometheus.Labels{"handler": path}
+	return promhttp.InstrumentHandlerCounter(requestsTotal.MustCurryWith(labels),
+		promhttp.InstrumentHandlerDuration(requestDuration.MustCurryWith(labels), next))
 }
 
 // NewServer creates the web server. It serves exactly:
@@ -45,8 +71,8 @@ func NewServer(logger log.Logger, routes []Route) (*http.ServeMux, error) {
 		}
 		level.Debug(logger).Log("request_path_added", r.RequestPath)
 		// Each layer wraps the next one: the log line is written after the
-		// request went through tracing and the handler.
-		h := withRequestLog(logger, &ochttp.Handler{Handler: alertHandler(r.Service, logger)})
+		// request went through the metrics and the handler.
+		h := withRequestLog(logger, withMetrics(r.RequestPath, alertHandler(r.Service, logger)))
 		mux.Handle(http.MethodPost+" "+r.RequestPath, h)
 	}
 	addHealthChecks(mux)
@@ -117,23 +143,16 @@ func alertHandler(s service.Service, logger log.Logger) http.Handler {
 	// A function literal with the right signature becomes an http.Handler
 	// through the conversion http.HandlerFunc(...).
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, span := trace.StartSpan(r.Context(), "alertmanager-handler")
-		defer span.End()
-
 		b, err := io.ReadAll(r.Body)
 		if err != nil {
 			logger.Log("err", err)
-			span.SetStatus(trace.Status{Code: http.StatusInternalServerError, Message: err.Error()})
 			reply(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
-		span.AddAttributes(trace.StringAttribute("alert", string(b)))
-
 		var wm webhook.Message
 		if err := json.Unmarshal(b, &wm); err != nil {
 			logger.Log("err", err)
-			span.SetStatus(trace.Status{Code: http.StatusBadRequest, Message: err.Error()})
 			reply(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -141,16 +160,14 @@ func alertHandler(s service.Service, logger log.Logger) http.Handler {
 		if wm.Data == nil || wm.Version == "" || wm.GroupKey == "" {
 			err = fmt.Errorf("the webhook message does not seem to be a valid Prometheus Alertmanager webhook. More information see https://prometheus.io/docs/alerting/latest/configuration/#webhook_config")
 			logger.Log("err", err)
-			span.SetStatus(trace.Status{Code: http.StatusBadRequest, Message: err.Error()})
 			reply(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		prs, err := s.Post(ctx, wm)
+		prs, err := s.Post(r.Context(), wm)
 		if err != nil {
 			status := statusFor(err)
 			logger.Log("err", err, "status", status)
-			span.SetStatus(trace.Status{Code: int32(status), Message: err.Error()})
 			// Alertmanager logs this text; it never contains the webhook URL.
 			reply(w, status, err.Error())
 			return

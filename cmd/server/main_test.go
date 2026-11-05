@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // Table-driven test (the usual Go style): each row is one case, the loop
@@ -92,6 +94,11 @@ func Test_newTeamsClient_retries(t *testing.T) {
 			}))
 			defer teams.Close()
 
+			// The metric is global and other cases add to it: compare the
+			// value before and after.
+			counted := teamsRequestsTotal.WithLabelValues("503")
+			before := testutil.ToFloat64(counted)
+
 			c := newTeamsClient(teamsClientOptions{retryMax: tt.retryMax})
 			resp, err := c.Post(teams.URL, "application/json", strings.NewReader("{}"))
 			if err != nil {
@@ -104,6 +111,10 @@ func Test_newTeamsClient_retries(t *testing.T) {
 			}
 			if got := calls.Load(); got != tt.wantCalls {
 				t.Errorf("Teams called %d times, want %d", got, tt.wantCalls)
+			}
+			// Every attempt is counted, retries too.
+			if got := testutil.ToFloat64(counted) - before; got != float64(tt.wantCalls) {
+				t.Errorf(`teams_requests_total{code="503"} grew by %v, want %d`, got, tt.wantCalls)
 			}
 		})
 	}

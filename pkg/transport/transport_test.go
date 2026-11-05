@@ -14,6 +14,7 @@ import (
 	"github.com/aursu/prometheus-msteams/pkg/service"
 	"github.com/go-kit/kit/log"
 	"github.com/prometheus/alertmanager/notify/webhook"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // fakeService stands in for the real Service (which renders a card and
@@ -136,5 +137,29 @@ func TestServer_logsStatus(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "method=POST uri=/alertmanager") || !strings.Contains(buf.String(), "status=422") {
 		t.Errorf("log does not show the request with status 422:\n%s", buf.String())
+	}
+}
+
+// Every webhook request is counted by path and answered status, and timed.
+func TestServer_metrics(t *testing.T) {
+	const path = "/metrics-test" // a path of its own: the metrics are global
+	svc := &fakeService{err: &service.TeamsError{StatusCode: http.StatusNotFound}}
+	srv, err := NewServer(log.NewNopLogger(), []Route{{Service: svc, RequestPath: path}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := os.ReadFile("../card/testdata/prom_post_request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, path, bytes.NewReader(msg)))
+
+	// testutil reads the current value of a metric.
+	if got := testutil.ToFloat64(requestsTotal.WithLabelValues(path, "422")); got != 1 {
+		t.Errorf(`requests_total{handler=%q, code="422"} = %v, want 1`, path, got)
+	}
+	if got := testutil.CollectAndCount(requestDuration); got == 0 {
+		t.Error("request_duration_seconds has no series")
 	}
 }

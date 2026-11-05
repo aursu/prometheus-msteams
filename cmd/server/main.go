@@ -22,7 +22,6 @@ import (
 	"github.com/aursu/prometheus-msteams/pkg/service"
 	"github.com/aursu/prometheus-msteams/pkg/transport"
 	"github.com/aursu/prometheus-msteams/pkg/version"
-	"github.com/labstack/echo/v4"
 	stdprometheus "github.com/prometheus/client_golang/prometheus"
 
 	"contrib.go.opencensus.io/exporter/jaeger"
@@ -437,12 +436,13 @@ func main() { //nolint: funlen
 	// checks (transport.NewServer) plus the metrics. Nothing else is served:
 	// the profiler (/debug/pprof) and /config, which listed the Teams URLs
 	// with their signatures, are gone.
-	var handler *echo.Echo
-	{
-		handler = transport.NewServer(logger, routes)
-		// Prometheus metrics.
-		handler.GET("/metrics", echo.WrapHandler(pe))
+	handler, err := transport.NewServer(logger, routes)
+	if err != nil {
+		logger.Log("err", err)
+		os.Exit(1)
 	}
+	// Prometheus metrics.
+	handler.Handle("GET /metrics", pe)
 
 	var g run.Group
 	{

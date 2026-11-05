@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -85,7 +86,10 @@ func TestServer(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			svc := &fakeService{err: tt.serviceErr}
-			srv := NewServer(log.NewNopLogger(), []Route{{Service: svc, RequestPath: webhookPath}})
+			srv, err := NewServer(log.NewNopLogger(), []Route{{Service: svc, RequestPath: webhookPath}})
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			// httptest.NewRecorder captures the response; ServeHTTP runs
 			// the request through the server without opening a port.
@@ -101,5 +105,36 @@ func TestServer(t *testing.T) {
 				t.Errorf("service called %d times, want %d", svc.calls, tt.wantCalls)
 			}
 		})
+	}
+}
+
+// A request path that http.ServeMux would misread stops the program at
+// startup.
+func TestNewServer_rejectsPath(t *testing.T) {
+	for _, p := range []string{"alertmanager", "/alerts/{team}", "/a b", ""} {
+		if _, err := NewServer(log.NewNopLogger(), []Route{{Service: &fakeService{}, RequestPath: p}}); err == nil {
+			t.Errorf("NewServer() accepted request path %q", p)
+		}
+	}
+}
+
+// Each request to a webhook path is logged with the status it was answered.
+func TestServer_logsStatus(t *testing.T) {
+	var buf bytes.Buffer
+	svc := &fakeService{err: &service.TeamsError{StatusCode: http.StatusNotFound}}
+	srv, err := NewServer(log.NewLogfmtLogger(&buf), []Route{{Service: svc, RequestPath: "/alertmanager"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := os.ReadFile("../card/testdata/prom_post_request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/alertmanager", bytes.NewReader(msg))
+	srv.ServeHTTP(httptest.NewRecorder(), req)
+
+	if !strings.Contains(buf.String(), "method=POST uri=/alertmanager") || !strings.Contains(buf.String(), "status=422") {
+		t.Errorf("log does not show the request with status 422:\n%s", buf.String())
 	}
 }

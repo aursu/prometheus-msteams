@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-kit/kit/log"
@@ -17,7 +18,6 @@ import (
 	"go.opencensus.io/trace"
 
 	"github.com/aursu/prometheus-msteams/pkg/service"
-	"github.com/labstack/echo/v4"
 )
 
 // Route holds the Service implementation and the Request path to serve the Service.
@@ -32,110 +32,142 @@ type Route struct {
 //   - GET /-/healthy and GET /-/ready: health checks for Kubernetes probes
 //
 // (main adds GET /metrics.) Any other path is 404; another method on a
-// route path is 405.
-func NewServer(logger log.Logger, routes []Route) *echo.Echo {
-	e := echo.New()
+// served path is 405.
+//
+// The routing is Go's own http.ServeMux: since Go 1.22 its patterns name the
+// method too ("POST /alertmanager"), and it answers 404 and 405 by itself.
+// The caller can add more patterns to the returned mux.
+func NewServer(logger log.Logger, routes []Route) (*http.ServeMux, error) {
+	mux := http.NewServeMux()
 	for _, r := range routes {
+		if err := checkRequestPath(r.RequestPath); err != nil {
+			return nil, err
+		}
 		level.Debug(logger).Log("request_path_added", r.RequestPath)
-		addRoute(e, r.RequestPath, r.Service, logger)
+		// Each layer wraps the next one: the log line is written after the
+		// request went through tracing and the handler.
+		h := withRequestLog(logger, &ochttp.Handler{Handler: alertHandler(r.Service, logger)})
+		mux.Handle(http.MethodPost+" "+r.RequestPath, h)
 	}
-	addHealthChecks(e)
-	e.HideBanner = true
-	return e
+	addHealthChecks(mux)
+	return mux, nil
+}
+
+// checkRequestPath rejects a request path that http.ServeMux would read as
+// something else: it must start with "/", and "{...}" would be a wildcard.
+func checkRequestPath(p string) error {
+	if !strings.HasPrefix(p, "/") {
+		return fmt.Errorf("request path %q does not start with /", p)
+	}
+	if strings.ContainsAny(p, "{} ") {
+		return fmt.Errorf("request path %q contains a brace or a space", p)
+	}
+	return nil
 }
 
 // addHealthChecks registers the liveness and readiness endpoints, named as
 // in Prometheus and Alertmanager. Both always answer 200: the configuration
 // is read once at startup and an invalid one stops the program, so a process
 // that answers HTTP is both alive and ready.
-func addHealthChecks(e *echo.Echo) {
-	ok := func(c echo.Context) error {
-		return c.String(http.StatusOK, "OK")
+func addHealthChecks(mux *http.ServeMux) {
+	ok := func(w http.ResponseWriter, _ *http.Request) {
+		reply(w, http.StatusOK, "OK")
 	}
-	e.GET("/-/healthy", ok)
-	e.GET("/-/ready", ok)
+	mux.HandleFunc("GET /-/healthy", ok)
+	mux.HandleFunc("GET /-/ready", ok)
 }
 
-func opencensusMiddleware() echo.MiddlewareFunc {
-	return echo.WrapMiddleware(func(h http.Handler) http.Handler {
-		return &ochttp.Handler{
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				h.ServeHTTP(w, r)
-			}),
-		}
+// statusRecorder passes everything through to the real ResponseWriter and
+// remembers the status code, which http.ResponseWriter cannot tell
+// afterwards. (The ResponseWriter field has no name: Go "embeds" it, so all
+// its methods are methods of statusRecorder too, and only WriteHeader is
+// replaced here.)
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// withRequestLog writes one log line per request, after it was handled.
+func withRequestLog(logger log.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		begin := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		logger.Log(
+			"method", r.Method,
+			"uri", r.RequestURI,
+			"host", r.Host,
+			"status", rec.status,
+			"took", time.Since(begin),
+		)
 	})
 }
 
-func kitLoggerMiddleware(logger log.Logger) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			defer func(begin time.Time) {
-				res := c.Response()
-				req := c.Request()
-				logger.Log(
-					"method", req.Method,
-					"uri", req.RequestURI,
-					"host", req.Host,
-					"status", res.Status,
-					"took", time.Since(begin),
-				)
-			}(time.Now())
-			return next(c)
-		}
-	}
-}
-
-func addRoute(e *echo.Echo, p string, s service.Service, logger log.Logger) {
-	e.POST(p, func(c echo.Context) error {
-		return handleRoute(c, s, logger)
-	},
-		kitLoggerMiddleware(logger),
-		opencensusMiddleware(),
-	)
-}
-
-// handleRoute reads the Alertmanager message from the request and passes it
+// alertHandler reads the Alertmanager message from the request and passes it
 // to the Service. The status code tells Alertmanager what to do next: it
 // retries a 5xx later, but not a 4xx (it counts that notification as
 // failed). A malformed request is answered 400, since sending the same bytes
 // again cannot succeed; a failed delivery as statusFor decides.
-func handleRoute(c echo.Context, s service.Service, logger log.Logger) error {
-	ctx, span := trace.StartSpan(c.Request().Context(), "alertmanager-handler")
-	defer span.End()
+func alertHandler(s service.Service, logger log.Logger) http.Handler {
+	// A function literal with the right signature becomes an http.Handler
+	// through the conversion http.HandlerFunc(...).
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, span := trace.StartSpan(r.Context(), "alertmanager-handler")
+		defer span.End()
 
-	b, err := io.ReadAll(c.Request().Body)
-	if err != nil {
-		logger.Log("err", err)
-		span.SetStatus(trace.Status{Code: 500, Message: err.Error()})
-		return c.String(500, err.Error())
-	}
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			logger.Log("err", err)
+			span.SetStatus(trace.Status{Code: http.StatusInternalServerError, Message: err.Error()})
+			reply(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 
-	span.AddAttributes(trace.StringAttribute("alert", string(b)))
+		span.AddAttributes(trace.StringAttribute("alert", string(b)))
 
-	var wm webhook.Message
-	if err := json.Unmarshal(b, &wm); err != nil {
-		logger.Log("err", err)
-		span.SetStatus(trace.Status{Code: http.StatusBadRequest, Message: err.Error()})
-		return c.String(http.StatusBadRequest, err.Error())
-	}
+		var wm webhook.Message
+		if err := json.Unmarshal(b, &wm); err != nil {
+			logger.Log("err", err)
+			span.SetStatus(trace.Status{Code: http.StatusBadRequest, Message: err.Error()})
+			reply(w, http.StatusBadRequest, err.Error())
+			return
+		}
 
-	if wm.Data == nil || wm.Version == "" || wm.GroupKey == "" {
-		err = fmt.Errorf("the webhook message does not seem to be a valid Prometheus Alertmanager webhook. More information see https://prometheus.io/docs/alerting/latest/configuration/#webhook_config")
-		logger.Log("err", err)
-		span.SetStatus(trace.Status{Code: http.StatusBadRequest, Message: err.Error()})
-		return c.String(http.StatusBadRequest, err.Error())
-	}
+		if wm.Data == nil || wm.Version == "" || wm.GroupKey == "" {
+			err = fmt.Errorf("the webhook message does not seem to be a valid Prometheus Alertmanager webhook. More information see https://prometheus.io/docs/alerting/latest/configuration/#webhook_config")
+			logger.Log("err", err)
+			span.SetStatus(trace.Status{Code: http.StatusBadRequest, Message: err.Error()})
+			reply(w, http.StatusBadRequest, err.Error())
+			return
+		}
 
-	prs, err := s.Post(ctx, wm)
-	if err != nil {
-		status := statusFor(err)
-		logger.Log("err", err, "status", status)
-		span.SetStatus(trace.Status{Code: int32(status), Message: err.Error()})
-		// Alertmanager logs this text; it never contains the webhook URL.
-		return c.String(status, err.Error())
-	}
+		prs, err := s.Post(ctx, wm)
+		if err != nil {
+			status := statusFor(err)
+			logger.Log("err", err, "status", status)
+			span.SetStatus(trace.Status{Code: int32(status), Message: err.Error()})
+			// Alertmanager logs this text; it never contains the webhook URL.
+			reply(w, status, err.Error())
+			return
+		}
 
-	return c.JSON(http.StatusOK, prs)
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(prs); err != nil {
+			logger.Log("err", err)
+		}
+	})
+}
+
+// reply answers with a status code and a line of plain text.
+func reply(w http.ResponseWriter, status int, text string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = io.WriteString(w, text)
 }
 
 // statusFor chooses the answer to Alertmanager for a failed delivery:

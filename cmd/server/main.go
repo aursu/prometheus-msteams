@@ -218,15 +218,18 @@ var (
 //nolint:gocyclo
 func main() { //nolint: funlen
 	var (
-		fs                            = flag.NewFlagSet("prometheus-msteams", flag.ExitOnError)
-		promVersion                   = fs.Bool("version", false, "Print the version")
-		logFormat                     = fs.String("log-format", "json", "json|fmt")
-		debugLogs                     = fs.Bool("debug", false, "Set log level to debug mode.")
-		httpAddr                      = fs.String("http-addr", ":2000", "HTTP listen address.")
-		requestURI                    = fs.String("teams-request-uri", "", "The default request URI path where Prometheus will post to.")
-		teamsWebhookURL               = fs.String("teams-incoming-webhook-url", "", "The default Microsoft Teams webhook connector.")
-		templateFile                  = fs.String("template-file", "./default-message-workflow-card.tmpl", "The Adaptive Card template file.")
-		escapeUnderscores             = fs.Bool("auto-escape-underscores", true, "Automatically replace all '_' with '\\_' from texts in the alert.")
+		fs              = flag.NewFlagSet("prometheus-msteams", flag.ExitOnError)
+		promVersion     = fs.Bool("version", false, "Print the version")
+		logFormat       = fs.String("log-format", "json", "json|fmt")
+		debugLogs       = fs.Bool("debug", false, "Set log level to debug mode.")
+		httpAddr        = fs.String("http-addr", ":2000", "HTTP listen address.")
+		requestURI      = fs.String("teams-request-uri", "", "The default request URI path where Prometheus will post to.")
+		teamsWebhookURL = fs.String("teams-incoming-webhook-url", "", "The default Microsoft Teams webhook connector.")
+		templateFile    = fs.String("template-file", "./default-message-workflow-card.tmpl", "The Adaptive Card template file.")
+		// Off by default: it rewrites every label and annotation value
+		// before rendering, which also breaks links built from them. The
+		// templates escape each value where they use it (mdEscape, toJson).
+		escapeUnderscores             = fs.Bool("auto-escape-underscores", false, "Before rendering, JSON-escape every label and annotation value and replace '_' with '\\_'. Only for templates that do not escape values themselves.")
 		configFile                    = fs.String("config-file", "", "The connectors configuration file.")
 		httpClientIdleConnTimeout     = fs.Duration("idle-conn-timeout", 90*time.Second, "The HTTP client idle connection timeout duration.")
 		httpClientTLSHandshakeTimeout = fs.Duration("tls-handshake-timeout", 30*time.Second, "The HTTP client TLS handshake timeout.")

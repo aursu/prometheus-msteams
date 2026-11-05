@@ -17,7 +17,17 @@
   {{- $headingColor = "Warning" }}
   {{- end -}}
 {{- end -}}
-
+{{- /* The line under the heading: the summary annotation, else the message
+       annotation, else the alert name. */ -}}
+{{- $subtitle := "Prometheus Alert" }}
+{{- if .CommonAnnotations.summary }}{{ $subtitle = .CommonAnnotations.summary }}
+{{- else if .CommonAnnotations.message }}{{ $subtitle = .CommonAnnotations.message }}
+{{- else if .CommonLabels.alertname }}{{ $subtitle = .CommonLabels.alertname }}
+{{- end }}
+{{- /* Escaping, everywhere a label or annotation value is written:
+       mdEscape keeps "_", "*", "[" and "]" from being read as markdown,
+       toJson writes the value as a JSON string, quotes included, so that
+       quotes and line breaks in it cannot break the card. */}}
 {
   "type":"message",
   "attachments":[
@@ -46,26 +56,14 @@
             },
             {
               "type": "TextBlock",
-              "text": "{{- if eq .CommonAnnotations.summary "" -}}
-              {{- if eq .CommonAnnotations.message "" -}}
-                {{- if eq .CommonLabels.alertname "" -}}
-                  Prometheus Alert
-                {{- else -}}
-                  {{- .CommonLabels.alertname -}}
-                {{- end -}}
-              {{- else -}}
-                {{- .CommonAnnotations.message -}}
-              {{- end -}}
-          {{- else -}}
-              {{- .CommonAnnotations.summary -}}
-          {{- end -}}",
+              "text": {{ $subtitle | mdEscape | toJson }},
               "wrap": true
             },
             {{$externalUrl := .ExternalURL}}
             {{- range $index, $alert := .Alerts }}{{- if $index }},{{- end }}
             {
               "type": "TextBlock",
-              "text": "[{{ $alert.Annotations.description }}]({{ $externalUrl }})",
+              "text": {{ printf "[%s](%s)" ($alert.Annotations.description | mdEscape) $externalUrl | toJson }},
               "wrap": true
             },
             {
@@ -77,15 +75,15 @@
                 {{- range $key, $value := $alert.Annotations }}
                 {{- if ne $key "description" }}
                 {
-                    "title": "{{ $key }}",
-                    "value": "{{ $value }}"
+                    "title": {{ $key | mdEscape | toJson }},
+                    "value": {{ $value | mdEscape | toJson }}
                 },
                 {{- end -}}
                 {{- end -}}
                 {{$c := counter}}{{ range $key, $value := $alert.Labels }}{{if call $c}},{{ end }}
                 {
-                  "title": "{{ $key }}",
-                  "value": "{{ $value }}"
+                  "title": {{ $key | mdEscape | toJson }},
+                  "value": {{ $value | mdEscape | toJson }}
                 }
                 {{- end }}
               ]

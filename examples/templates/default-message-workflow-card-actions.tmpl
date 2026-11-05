@@ -24,7 +24,18 @@
   {{- $headingColor = "Warning" }}
   {{- end -}}
 {{- end -}}
-
+{{- /* The line under the heading: the summary annotation, else the message
+       annotation, else the alert name. */ -}}
+{{- $subtitle := "Prometheus Alert" }}
+{{- if .CommonAnnotations.summary }}{{ $subtitle = .CommonAnnotations.summary }}
+{{- else if .CommonAnnotations.message }}{{ $subtitle = .CommonAnnotations.message }}
+{{- else if .CommonLabels.alertname }}{{ $subtitle = .CommonLabels.alertname }}
+{{- end }}
+{{- /* Escaping, everywhere a label or annotation value is written:
+       mdEscape keeps "_", "*", "[" and "]" from being read as markdown,
+       toJson writes the value as a JSON string, quotes included, so that
+       quotes and line breaks in it cannot break the card. Links get toJson
+       only, and urlquery for a value inside a URL. */}}
 {
   "type":"message",
   "attachments":[
@@ -53,26 +64,14 @@
             },
             {
               "type": "TextBlock",
-              "text": "{{- if eq .CommonAnnotations.summary "" -}}
-              {{- if eq .CommonAnnotations.message "" -}}
-                {{- if eq .CommonLabels.alertname "" -}}
-                  Prometheus Alert
-                {{- else -}}
-                  {{- .CommonLabels.alertname -}}
-                {{- end -}}
-              {{- else -}}
-                {{- .CommonAnnotations.message -}}
-              {{- end -}}
-          {{- else -}}
-              {{- .CommonAnnotations.summary -}}
-          {{- end -}}",
+              "text": {{ $subtitle | mdEscape | toJson }},
               "wrap": true
             },
             {{$externalUrl := .ExternalURL}}
             {{- range $index, $alert := .Alerts }}{{- if $index }},{{- end }}
             {
               "type": "TextBlock",
-              "text": "[{{ $alert.Annotations.description }}]({{ $externalUrl }})",
+              "text": {{ printf "[%s](%s)" ($alert.Annotations.description | mdEscape) $externalUrl | toJson }},
               "wrap": true
             },
             {
@@ -84,15 +83,15 @@
                 {{- range $key, $value := $alert.Annotations }}
                 {{- if ne $key "description" }}
                 {
-                    "title": "{{ $key }}",
-                    "value": "{{ $value }}"
+                    "title": {{ $key | mdEscape | toJson }},
+                    "value": {{ $value | mdEscape | toJson }}
                 },
                 {{- end -}}
                 {{- end -}}
                 {{$c := counter}}{{ range $key, $value := $alert.Labels }}{{if call $c}},{{ end }}
                 {
-                  "title": "{{ $key }}",
-                  "value": "{{ $value }}"
+                  "title": {{ $key | mdEscape | toJson }},
+                  "value": {{ $value | mdEscape | toJson }}
                 }
                 {{- end }}
               ]
@@ -102,21 +101,21 @@
         {{ if $should_have_potential_actions }}
         ,
         "actions": [
-          {{- /* urlquery encodes label names and values for the URL. Known
-                 limitation: with -auto-escape-underscores (on by default) the
-                 values arrive as "a\_b", so the filter does not match; to be
-                 fixed by escaping at the point of use. */}}
+          {{- /* Alertmanager's alert list, filtered to the group's common
+                 labels: labelMatchers writes {name="value", ...}, urlquery
+                 encodes it for the URL. Silenced and inhibited alerts are
+                 shown too. */}}
           {
               "type": "Action.OpenUrl",
               "title": "View in Alertmanager",
-              "url": "{{ .ExternalURL }}/#?alerts/silenced=true&inhibited=true&active=true&filter=%7B{{$c := counter}}{{ range $key, $value := .CommonLabels }}{{if call $c}}%22%2C%20{{ end }}{{ $key | urlquery }}%3D%22{{ $value | urlquery }}{{- end }}%22%7D"
+              "url": {{ printf "%s/#/alerts?silenced=true&inhibited=true&active=true&filter=%s" .ExternalURL (labelMatchers .CommonLabels | urlquery) | toJson }}
           }
         {{ if gt (len $alertkarma_prefix) 0 }}
           ,
           {
             "type": "Action.OpenUrl",
             "title": "View in Alertkarma",
-            "url": "{{ $alertkarma_prefix }}q=alertname%3D{{ .CommonLabels.alertname }}"
+            "url": {{ printf "%sq=alertname%%3D%s" $alertkarma_prefix (.CommonLabels.alertname | urlquery) | toJson }}
           }
         {{ end }}
         {{ if gt (len .CommonAnnotations.investigate_link) 0 }}
@@ -124,7 +123,7 @@
           {
             "type": "Action.OpenUrl",
             "title": "Investigate",
-            "url": "{{- .CommonAnnotations.investigate_link | trim -}}"
+            "url": {{ .CommonAnnotations.investigate_link | trim | toJson }}
           }
         {{ end }}
         {{- if .CommonAnnotations.runbook -}}
@@ -132,7 +131,7 @@
           {
               "type": "Action.OpenUrl",
               "title": "runbook",
-              "url": "{{ reReplaceAll "_" "\\\\_" .CommonAnnotations.runbook }}"
+              "url": {{ .CommonAnnotations.runbook | toJson }}
           }
         {{- end -}}
         ]

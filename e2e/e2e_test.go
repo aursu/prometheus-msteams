@@ -26,7 +26,7 @@ type alert struct {
 }
 
 func TestServer(t *testing.T) {
-	tmpl, err := card.ParseTemplateFile("../default-message-card.tmpl")
+	tmpl, err := card.ParseTemplateFile("../default-message-workflow-card.tmpl")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestServer(t *testing.T) {
 					Service: service.NewLoggingService(
 						logger,
 						service.NewSimpleService(
-							c, http.DefaultClient, testWebhookURL, service.O365,
+							c, http.DefaultClient, testWebhookURL,
 						),
 					),
 				},

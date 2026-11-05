@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -69,31 +69,91 @@ func parseTeamsConfigFile(f string) (PromTeamsConfig, error) {
 	return tc, nil
 }
 
-// New Webhook URL format : https://devblogs.microsoft.com/microsoft365dev/retirement-of-office-365-connectors-within-microsoft-teams/
-var validWebhookPatternO365 = regexp.MustCompile(`^[a-z0-9]+\.webhook\.office\.com/webhookb2/[a-z0-9\-]+@[a-z0-9\-]+/IncomingWebhook/[a-z0-9]+/[a-z0-9\-]+(/[a-zA-Z0-9\-]+)?$`)
-var validWebhookPatternWorkflow = regexp.MustCompile((`^[a-z0-9\-\.]+\.environment\.api\.powerplatform\.com/powerautomate/automations/direct/workflows/[\w]+/triggers/manual/paths/invoke\?api-version=\d+&sp=%2Ftriggers%2Fmanual%2Frun&sv=1\.0&sig=[a-zA-Z0-9\-_]+`))
-var legacyWebhookPrefix = "outlook.office.com/webhook/" // old format is only valid until 11. april '21
+// The parts of a Teams Workflow URL that stay the same across tenants,
+// regions and URL generations. Everything else varies and is not checked: the
+// tenant/environment prefix of the host, the region, an explicit ":443",
+// extra path segments such as "/powerautomate/automations/direct/cu/19", the
+// workflow id and the values of the query parameters.
+//
+// Example (current generation):
+//
+//	https://<env>.<region>.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/19/workflows/<id>/triggers/manual/paths/invoke?api-version=1&sp=...&sv=1.0&sig=...
+//
+// (A "var (...)" block declares several package-level variables at once.)
+var (
+	// The host must end with one of these. logic.azure.com is the host of
+	// Workflows created before Microsoft moved them to Power Platform.
+	workflowHostSuffixes = []string{
+		".environment.api.powerplatform.com",
+		".logic.azure.com",
+	}
+	// The path must contain workflowPathMarker and end with workflowPathSuffix.
+	workflowPathMarker = "/workflows/"
+	workflowPathSuffix = "/triggers/manual/paths/invoke"
+	// Each of these query parameters must be present and non-empty.
+	// "api-version" is required by the endpoint itself. "sp", "sv" and "sig"
+	// are the Shared Access Signature (SAS): permissions, signature version
+	// and the signature over them - the secret part of the URL and the only
+	// way this program can authenticate to the Workflow.
+	workflowQueryParams = []string{"api-version", "sp", "sv", "sig"}
+)
 
-func validateWebhook(workflowType service.WebhookType, u string) error {
-	path := strings.TrimPrefix(u, "https://")
-	if u == path {
-		return fmt.Errorf("the webhook_url must start with 'https://'. url: '%s'", u)
+// validateWebhook checks that u looks like a Teams Workflow URL, by the
+// constant parts listed above. It returns nil when the URL is fine, otherwise
+// an error saying which part is wrong. (Go has no exceptions: a function
+// returns an error value, and the caller checks it for nil.)
+//
+// The error never contains the URL itself: the query holds the signature,
+// and errors end up in logs.
+func validateWebhook(u string) error {
+	// url.Parse splits the URL into scheme, host, path and query. Its own
+	// error text would quote the whole URL, so it is not passed on.
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return errors.New("the webhook_url is not a valid URL")
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("the webhook_url must use https, not %q", parsed.Scheme)
 	}
 
-	switch workflowType {
-	case service.O365:
-		isValidTeamsHook := validWebhookPatternO365.MatchString(path) || strings.HasPrefix(path, legacyWebhookPrefix)
-		if !isValidTeamsHook {
-			return fmt.Errorf("the webhook_url has an unexpected format '%s'", u)
+	// Hostname() is the host without the port, so ":443" does not matter.
+	host := strings.ToLower(parsed.Hostname())
+	if !hasAnySuffix(host, workflowHostSuffixes) {
+		return fmt.Errorf("the webhook_url host %q is not a Teams Workflow host (*%s)",
+			host, strings.Join(workflowHostSuffixes, ", *"))
+	}
+
+	if !strings.Contains(parsed.Path, workflowPathMarker) || !strings.HasSuffix(parsed.Path, workflowPathSuffix) {
+		return fmt.Errorf("the webhook_url path must contain %q and end with %q",
+			workflowPathMarker, workflowPathSuffix)
+	}
+
+	query := parsed.Query()
+	for _, name := range workflowQueryParams {
+		if query.Get(name) != "" {
+			continue
 		}
-	case service.Workflow:
-		isValidTeamsHook := validWebhookPatternWorkflow.MatchString(path)
-		if !isValidTeamsHook {
-			return fmt.Errorf("the webhook_url has an unexpected format '%s'", u)
+		// A Workflow whose trigger is restricted to signed-in users ("Who can
+		// trigger the flow?" set to a tenant option instead of "Anyone") is
+		// called with an Entra ID token instead of a signature. This program
+		// cannot obtain such tokens, so the URL is unusable, not just odd.
+		if name == "sig" {
+			return errors.New("the webhook_url has no \"sig\" query parameter: the Workflow " +
+				"probably requires signed-in callers; set its trigger's \"Who can trigger the flow?\" to \"Anyone\"")
 		}
-		return nil
+		return fmt.Errorf("the webhook_url has no %q query parameter", name)
 	}
 	return nil
+}
+
+// hasAnySuffix reports whether s ends with one of the suffixes.
+func hasAnySuffix(s string, suffixes []string) bool {
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(s, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 //nolint:gocyclo
@@ -108,7 +168,7 @@ func main() { //nolint: funlen
 		httpAddr                      = fs.String("http-addr", ":2000", "HTTP listen address.")
 		requestURI                    = fs.String("teams-request-uri", "", "The default request URI path where Prometheus will post to.")
 		teamsWebhookURL               = fs.String("teams-incoming-webhook-url", "", "The default Microsoft Teams webhook connector.")
-		templateFile                  = fs.String("template-file", "", "The Microsoft Teams Message Card template file.")
+		templateFile                  = fs.String("template-file", "./default-message-workflow-card.tmpl", "The Adaptive Card template file.")
 		escapeUnderscores             = fs.Bool("auto-escape-underscores", true, "Automatically replace all '_' with '\\_' from texts in the alert.")
 		configFile                    = fs.String("config-file", "", "The connectors configuration file.")
 		httpClientIdleConnTimeout     = fs.Duration("idle-conn-timeout", 90*time.Second, "The HTTP client idle connection timeout duration.")
@@ -116,27 +176,17 @@ func main() { //nolint: funlen
 		httpClientMaxIdleConn         = fs.Int("max-idle-conns", 100, "The HTTP client maximum number of idle connections")
 		insecureSkipVerify            = fs.Bool("insecure-skip-verify", false, "Disable validation of the server certificate.")
 		retryMax                      = fs.Int("max-retry-count", 3, "The retry maximum for sending requests to the webhook")
-		validateWebhookURL            = fs.Bool("validate-webhook-url", false, "Enforce strict validation of webhook url")
-		useWorkflowWebhook            = fs.Bool("workflow-webhook", false, "Use Workflow webhooks")
+		// On by default: a wrong URL stops the program at startup instead of
+		// failing every notification later. See validateWebhook for the rules.
+		validateWebhookURL = fs.Bool("validate-webhook-url", true, "Check that every webhook URL looks like a Teams Workflow URL (https, Workflow host, .../workflows/.../triggers/manual/paths/invoke, api-version, sp, sv and sig present).")
+		// Kept only so that existing command lines with -workflow-webhook still
+		// start (an unknown flag stops the program); Workflow is always on now.
+		_ = fs.Bool("workflow-webhook", true, "Deprecated, ignored: Workflow webhooks are the only kind.")
 	)
 
 	if err := ff.Parse(fs, os.Args[1:], ff.WithEnvVarNoPrefix()); err != nil {
 		fmt.Fprint(os.Stderr, err.Error())
 		os.Exit(1)
-	}
-
-	var webhookType service.WebhookType
-	// Set default template based on webhookType if not already set
-	if *useWorkflowWebhook {
-		webhookType = service.Workflow
-		if *templateFile == "" {
-			*templateFile = "./default-message-workflow-card.tmpl"
-		}
-	} else {
-		webhookType = service.O365
-		if *templateFile == "" {
-			*templateFile = "./default-message-card.tmpl"
-		}
 	}
 
 	if *promVersion {
@@ -163,9 +213,6 @@ func main() { //nolint: funlen
 		}
 		logger = log.With(logger, "ts", log.DefaultTimestamp, "caller", log.DefaultCaller)
 	}
-	level.Debug(logger).Log(
-		"webhook-type", webhookType,
-	)
 
 	// Tracer.
 	if *jaegerTrace {
@@ -272,7 +319,7 @@ func main() { //nolint: funlen
 				return nil, err
 			}
 
-			err = validateWebhook(webhookType, webhook)
+			err = validateWebhook(webhook)
 			if *validateWebhookURL && err != nil {
 				err = errors.Wrapf(err, "webhook validation failed for /_dynamicwebhook/")
 				logger.Log("err", err)
@@ -280,7 +327,7 @@ func main() { //nolint: funlen
 			}
 
 			var s service.Service
-			s = service.NewSimpleService(defaultConverter, httpClient, webhook, webhookType)
+			s = service.NewSimpleService(defaultConverter, httpClient, webhook)
 			s = service.NewLoggingService(logger, s)
 			return s, nil
 		}
@@ -290,7 +337,7 @@ func main() { //nolint: funlen
 	// Connectors from config file.
 	for _, c := range tc.Connectors {
 		for uri, webhook := range c {
-			err := validateWebhook(webhookType, webhook)
+			err := validateWebhook(webhook)
 			if *validateWebhookURL && err != nil {
 				logger.Log("err", err)
 				os.Exit(1)
@@ -298,7 +345,7 @@ func main() { //nolint: funlen
 
 			var r transport.Route
 			r.RequestPath = uri
-			r.Service = service.NewSimpleService(defaultConverter, httpClient, webhook, webhookType)
+			r.Service = service.NewSimpleService(defaultConverter, httpClient, webhook)
 			r.Service = service.NewLoggingService(logger, r.Service)
 			routes = append(routes, r)
 		}
@@ -317,7 +364,7 @@ func main() { //nolint: funlen
 			)
 			os.Exit(1)
 		}
-		err := validateWebhook(webhookType, c.WebhookURL)
+		err := validateWebhook(c.WebhookURL)
 		if *validateWebhookURL && err != nil {
 			logger.Log("err", err)
 			os.Exit(1)
@@ -350,7 +397,7 @@ func main() { //nolint: funlen
 
 		var r transport.Route
 		r.RequestPath = c.RequestPath
-		r.Service = service.NewSimpleService(converter, httpClient, c.WebhookURL, webhookType)
+		r.Service = service.NewSimpleService(converter, httpClient, c.WebhookURL)
 		r.Service = service.NewLoggingService(logger, r.Service)
 		routes = append(routes, r)
 	}

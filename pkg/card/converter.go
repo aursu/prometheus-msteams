@@ -1,64 +1,30 @@
 // Package card provides types and utilities for converting Prometheus
-// Alertmanager webhook messages into Microsoft Teams connector card formats.
+// Alertmanager webhook messages into Microsoft Teams Adaptive Card messages.
 package card
 
 import (
 	"context"
-	"time"
 
 	"github.com/go-kit/kit/log"
 	"github.com/prometheus/alertmanager/notify/webhook"
 )
 
-// Office365ConnectorCard represents https://docs.microsoft.com/en-us/microsoftteams/platform/task-modules-and-cards/cards/cards-reference#example-office-365-connector-card
-type Office365ConnectorCard struct {
-	Context         string    `json:"@context"`
-	Type            string    `json:"@type"`
-	Title           string    `json:"title"`
-	ExpectedActors  []string  `json:"expectedActors,omitempty"`
-	Text            string    `json:"text"`
-	Summary         string    `json:"summary"`
-	ThemeColor      string    `json:"themeColor"`
-	Sections        []Section `json:"sections,omitempty"`
-	PotentialAction []Action  `json:"potentialAction,omitempty"`
-}
-
-// Image represents https://docs.microsoft.com/en-us/outlook/actionable-messages/message-card-reference#image-object
-type Image struct {
-	Image string `json:"image,omitempty"`
-	Title string `json:"title,omitempty"`
-}
-
-// Action represents https://docs.microsoft.com/en-us/outlook/actionable-messages/message-card-reference#actions
-// It is currently impossible to support each type in one struct. This is Go's limitation.
+// Action is one entry of an Adaptive Card "actions" list, e.g. an
+// Action.OpenUrl button. Action types differ in their fields, so it is kept as
+// a free-form JSON object (a map from field name to any value) instead of a
+// fixed struct.
 type Action map[string]interface{}
 
-// Section represents https://docs.microsoft.com/en-us/outlook/actionable-messages/message-card-reference#section-fields
-type Section struct {
-	Title            string        `json:"title,omitempty"`
-	ActivityTitle    string        `json:"activityTitle,omitempty"`
-	ActivityText     string        `json:"activityText,omitempty"`
-	ActivitySubtitle string        `json:"activitySubtitle,omitempty"`
-	ActivityImage    string        `json:"activityImage,omitempty"`
-	Text             string        `json:"text,omitempty"`
-	Markdown         bool          `json:"markdown"`
-	Facts            []FactSection `json:"facts,omitempty"`
-	Images           []Image       `json:"images,omitempty"`
-	PotentialAction  []Action      `json:"potentialAction,omitempty"`
-}
-
-// FactSection represents a name/value pair fact in an Office365 connector card section.
-type FactSection struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
-// Converter converts an alert manager webhook message to Office365ConnectorCard.
+// Converter turns one Alertmanager webhook message (one alert group) into one
+// Teams Workflow message carrying an Adaptive Card.
+// (A Go interface lists the methods a type must have; any type that has them
+// satisfies the interface automatically, without an "implements" keyword.)
 type Converter interface {
-	Convert(context.Context, webhook.Message) (Office365ConnectorCard, error)
 	ConvertWorkflow(context.Context, webhook.Message) (WorkflowConnectorCard, error)
 }
 
+// loggingMiddleware wraps another Converter and logs every conversion
+// (decorator pattern). Its ConvertWorkflow method is in converterWorkflow.go.
 type loggingMiddleware struct {
 	logger log.Logger
 	next   Converter
@@ -67,31 +33,4 @@ type loggingMiddleware struct {
 // NewCreatorLoggingMiddleware creates a loggingMiddleware.
 func NewCreatorLoggingMiddleware(l log.Logger, n Converter) Converter {
 	return loggingMiddleware{l, n}
-}
-
-func (l loggingMiddleware) Convert(ctx context.Context, a webhook.Message) (c Office365ConnectorCard, err error) {
-	defer func(begin time.Time) {
-		if len(c.PotentialAction) > 5 {
-			l.logger.Log(
-				"warning", "There can only be a maximum of 5 actions in a potentialAction collection",
-				"actions", c.PotentialAction,
-			)
-		}
-
-		for _, s := range c.Sections {
-			if len(s.PotentialAction) > 5 {
-				l.logger.Log(
-					"warning", "There can only be a maximum of 5 actions in a potentialAction collection",
-					"actions", s.PotentialAction,
-				)
-			}
-		}
-
-		_ = l.logger.Log(
-			"alert", a,
-			"card", c,
-			"took", time.Since(begin),
-		)
-	}(time.Now())
-	return l.next.Convert(ctx, a)
 }

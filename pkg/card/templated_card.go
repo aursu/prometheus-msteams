@@ -15,8 +15,7 @@ import (
 	"k8s.io/helm/pkg/engine"
 )
 
-const messageCardType = "MessageCard"
-
+// workflowCardType is the top-level "type" a Teams Workflow message must have.
 const workflowCardType = "message"
 
 // templatedCard implements Converter using Alert manager templating.
@@ -31,27 +30,10 @@ func NewTemplatedCardCreator(template *template.Template, escapeUnderscores bool
 	return &templatedCard{template, escapeUnderscores}
 }
 
-func (m *templatedCard) Convert(ctx context.Context, promAlert webhook.Message) (Office365ConnectorCard, error) {
-	_, span := trace.StartSpan(ctx, "templatedCard.Convert")
-	defer span.End()
-
-	cardString, err := m.executeTemplate(promAlert)
-	if err != nil {
-		return Office365ConnectorCard{}, err
-	}
-
-	var card Office365ConnectorCard
-	if err := json.Unmarshal([]byte(cardString), &card); err != nil {
-		return Office365ConnectorCard{}, err
-	}
-
-	if card.Type != messageCardType {
-		return Office365ConnectorCard{}, errors.New("only MessageCard type is supported")
-	}
-
-	return card, nil
-}
-
+// ConvertWorkflow renders the template "teams.card" with the alert group and
+// parses the result as JSON. A template that produces invalid JSON, or JSON
+// whose top-level type is not "message", is an error here, before anything is
+// sent to Teams.
 func (m *templatedCard) ConvertWorkflow(ctx context.Context, promAlert webhook.Message) (WorkflowConnectorCard, error) {
 	_, span := trace.StartSpan(ctx, "templatedCard.ConvertWorkflow")
 	defer span.End()

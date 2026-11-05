@@ -13,14 +13,9 @@ import (
 	"go.opencensus.io/trace"
 )
 
-// WebhookType represents the type of Microsoft Teams webhook connector.
-type WebhookType string
-
-// Supported webhook types for Microsoft Teams connectors.
-const (
-	O365     WebhookType = "o365"
-	Workflow WebhookType = "microsoft-workflow"
-)
+// Only one kind of Teams webhook is supported: a Teams Workflow ("Post to a
+// channel when a webhook request is received"), which accepts Adaptive Cards
+// only. Office 365 connectors (MessageCard format) were retired by Microsoft.
 
 // PostResponse is the prometheus msteams service response.
 type PostResponse struct {
@@ -34,58 +29,26 @@ type Service interface {
 	Post(context.Context, webhook.Message) (resp []PostResponse, err error)
 }
 
+// simpleService sends every alert group to one Teams Workflow URL.
+// (In Go a struct is the data part of a class; the functions below declared
+// with the receiver "(s simpleService)" are its methods.)
 type simpleService struct {
-	converter   card.Converter
-	client      *http.Client
-	webhookURL  string
-	webhookType WebhookType
+	converter  card.Converter
+	client     *http.Client
+	webhookURL string
 }
 
-// NewSimpleService creates a simpleService.
-func NewSimpleService(converter card.Converter, client *http.Client, webhookURL string, webhookType WebhookType) Service {
-	return simpleService{converter, client, webhookURL, webhookType}
+// NewSimpleService creates a simpleService. Go has no constructors; a
+// New... function plays that role.
+func NewSimpleService(converter card.Converter, client *http.Client, webhookURL string) Service {
+	return simpleService{converter, client, webhookURL}
 }
 
+// Post renders the alert group into an Adaptive Card and sends it to Teams.
 func (s simpleService) Post(ctx context.Context, wm webhook.Message) ([]PostResponse, error) {
 	ctx, span := trace.StartSpan(ctx, "simpleService.Post")
 	defer span.End()
 
-	switch s.webhookType {
-	case O365:
-		return s.postO365Webhook(ctx, wm)
-	case Workflow:
-		return s.postWorkflowWebhook(ctx, wm)
-	}
-
-	return nil, fmt.Errorf("unhandled webhookType: %s", s.webhookType)
-}
-
-func (s simpleService) postO365Webhook(ctx context.Context, wm webhook.Message) ([]PostResponse, error) {
-	prs := []PostResponse{}
-
-	c, err := s.converter.Convert(ctx, wm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse webhook message: %w", err)
-	}
-
-	// Split into multiple messages if necessary.
-	cc, err := splitOffice365Card(c)
-	if err != nil {
-		return nil, fmt.Errorf("failed to split Office 365 Card: %w", err)
-	}
-
-	// TODO(@bzon): post concurrently.
-	for _, c := range cc {
-		pr, err := s.post(ctx, c, s.webhookURL)
-		prs = append(prs, pr)
-		if err != nil {
-			return prs, err
-		}
-	}
-	return prs, nil
-}
-
-func (s simpleService) postWorkflowWebhook(ctx context.Context, wm webhook.Message) ([]PostResponse, error) {
 	prs := []PostResponse{}
 
 	c, err := s.converter.ConvertWorkflow(ctx, wm)
@@ -138,61 +101,4 @@ func (s simpleService) post(ctx context.Context, c interface{}, url string) (Pos
 	pr.Message = string(rb)
 
 	return pr, nil
-}
-
-// splitOffice365Card splits a single Office365ConnectorCard into multiple Office365ConnectorCard.
-// The purpose of doing this is to prevent getting limited by Microsoft Teams API when sending a large JSON payload.
-func splitOffice365Card(c card.Office365ConnectorCard) ([]card.Office365ConnectorCard, error) {
-	// Maximum message size of 14336 Bytes (14KB)
-	const maxSize = 14336
-	// Maximum number of sections
-	// ref: https://docs.microsoft.com/en-us/microsoftteams/platform/concepts/cards/cards-reference#notes-on-the-office-365-connector-card
-	const maxCardSections = 10
-
-	var cards []card.Office365ConnectorCard
-
-	// marshal cards in order to get the byte size
-	cb, err := json.Marshal(c)
-	if err != nil {
-		return nil, err
-	}
-
-	// Everything is good.
-	if (len(c.Sections) < maxCardSections) && (len(cb) < maxSize) {
-		cards = append(cards, c)
-		return cards, nil
-	}
-
-	indexAdded := make(map[int]bool)
-
-	// Here, we keep creating a new card until all sections are transferred into a new card.
-	for len(indexAdded) != len(c.Sections) {
-		newCard := c // take all the attributes
-		newCard.Sections = nil
-
-		for i, s := range c.Sections {
-			if _, ok := indexAdded[i]; ok { // check if the index is already added.
-				continue
-			}
-
-			// marshal cards in order to get the byte size
-			newCardb, err := json.Marshal(newCard)
-			if err != nil {
-				return nil, err
-			}
-
-			// If the max length or size has exceeded the limit,
-			// break the loop so we can create a new card again.
-			if (len(newCard.Sections) >= maxCardSections) || (len(newCardb) >= maxSize) {
-				break
-			}
-
-			newCard.Sections = append(newCard.Sections, s)
-			indexAdded[i] = true
-		}
-
-		cards = append(cards, newCard)
-	}
-
-	return cards, nil
 }

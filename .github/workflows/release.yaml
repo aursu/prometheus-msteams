@@ -82,7 +82,7 @@ jobs:
           fail_on_unmatched_files: true
           generate_release_notes: true
           files: |
-            default-message-card.tmpl
+            default-message-workflow-card.tmpl
             bin/prometheus-msteams-darwin-amd64
             bin/prometheus-msteams-linux-amd64
             bin/prometheus-msteams-windows-amd64.exe

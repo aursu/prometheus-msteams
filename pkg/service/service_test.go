@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,12 +32,13 @@ func (f fixedCard) Convert(context.Context, webhook.Message) (json.RawMessage, e
 
 // fakeTeams starts a local HTTP server that plays Teams: it answers every
 // request with status and body, and counts the requests. Cleanup stops it
-// when the test ends.
-func fakeTeams(t *testing.T, status int, body string) (webhookURL string, calls *int) {
+// when the test ends. The handler runs in the server's goroutine, so the
+// count is an atomic.Int32, safe to read from the test's goroutine.
+func fakeTeams(t *testing.T, status int, body string) (webhookURL string, calls *atomic.Int32) {
 	t.Helper()
-	calls = new(int)
+	calls = new(atomic.Int32)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		*calls++
+		calls.Add(1)
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
@@ -47,11 +49,11 @@ func fakeTeams(t *testing.T, status int, body string) (webhookURL string, calls 
 
 // silentTeams plays a Teams that accepts the request but never answers: each
 // request waits until the client gives up.
-func silentTeams(t *testing.T) (webhookURL string, calls *int) {
+func silentTeams(t *testing.T) (webhookURL string, calls *atomic.Int32) {
 	t.Helper()
-	calls = new(int)
+	calls = new(atomic.Int32)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		*calls++
+		calls.Add(1)
 		// Go's server notices that the client went away (and cancels
 		// r.Context()) only once the request body has been read to the end.
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -105,8 +107,8 @@ func TestPost_teamsAnswers(t *testing.T) {
 
 			prs, err := s.Post(context.Background(), webhook.Message{})
 
-			if *calls != 1 {
-				t.Fatalf("Teams called %d times, want 1", *calls)
+			if calls.Load() != 1 {
+				t.Fatalf("Teams called %d times, want 1", calls.Load())
 			}
 			if !tt.wantErr {
 				if err != nil {
@@ -166,8 +168,8 @@ func TestPost_throughRetryClient(t *testing.T) {
 	if !errors.As(err, &te) || te.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("Post() error = %v, want *TeamsError 503", err)
 	}
-	if *calls != 1 {
-		t.Errorf("Teams called %d times, want 1 (no retries)", *calls)
+	if calls.Load() != 1 {
+		t.Errorf("Teams called %d times, want 1 (no retries)", calls.Load())
 	}
 	if strings.Contains(err.Error(), testSig) {
 		t.Errorf("error leaks the signature: %v", err)
@@ -207,8 +209,8 @@ func TestPost_cardFails(t *testing.T) {
 	if !errors.Is(err, ErrCard) || !strings.Contains(err.Error(), "bad template") {
 		t.Fatalf("Post() error = %v, want ErrCard with the cause", err)
 	}
-	if *calls != 0 {
-		t.Errorf("Teams called %d times, want 0", *calls)
+	if calls.Load() != 0 {
+		t.Errorf("Teams called %d times, want 0", calls.Load())
 	}
 }
 
@@ -232,8 +234,8 @@ func TestPost_timeout(t *testing.T) {
 	if took < timeout || took > 2*time.Second {
 		t.Errorf("Post() took %s, want just over %s", took, timeout)
 	}
-	if *calls != 1 {
-		t.Errorf("Teams called %d times, want 1", *calls)
+	if calls.Load() != 1 {
+		t.Errorf("Teams called %d times, want 1", calls.Load())
 	}
 	if strings.Contains(err.Error(), testSig) || strings.Contains(err.Error(), "/workflows/") {
 		t.Errorf("error leaks the URL: %v", err)

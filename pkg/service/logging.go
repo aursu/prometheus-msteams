@@ -26,7 +26,6 @@ func (s loggingService) Post(ctx context.Context, wm webhook.Message) (prs []Pos
 			level.Debug(s.logger).Log(
 				"response_message", pr.Message,
 				"response_status", pr.Status,
-				"webhook_url", pr.WebhookURL,
 				"err", err,
 			)
 		}

@@ -134,13 +134,6 @@ func TestServer(t *testing.T) {
 					return
 				}
 
-				// because webhook url port dynamically changes
-				for i := range prs {
-					if prs[i].WebhookURL == "" {
-						t.Fatal("webhook url should not be empty")
-					}
-					prs[i].WebhookURL = ""
-				}
 				testutils.CompareToGoldenFile(t, prs, t.Name()+"/resp.json", *update)
 			}
 		})

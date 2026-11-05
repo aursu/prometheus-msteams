@@ -270,9 +270,13 @@ func main() { //nolint: funlen
 
 	// Teams HTTP client setup.
 	retryClient := retryablehttp.NewClient()
-	if !*debugLogs {
-		retryClient.Logger = nil
-	}
+	// The retry client's own logger prints every request URL, signature
+	// included (it masks only passwords), so it stays off even with -debug.
+	retryClient.Logger = nil
+	// When the retries are used up, hand back the last response or error as
+	// it is. The default instead returns a new error "POST <full URL> giving
+	// up after N attempt(s)": the status code is lost and the URL leaks.
+	retryClient.ErrorHandler = retryablehttp.PassthroughErrorHandler
 	retryClient.RetryMax = *retryMax
 	retryClient.HTTPClient = &http.Client{
 		Transport: &ochttp.Transport{

@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,6 +28,13 @@ func (f *fakeService) Post(_ context.Context, _ webhook.Message) ([]service.Post
 	return []service.PostResponse{}, f.err
 }
 
+// timeoutError imitates a network error that reports a timeout, like the
+// one Go's HTTP client returns when its Timeout is exceeded.
+type timeoutError struct{}
+
+func (timeoutError) Error() string { return "i/o timeout" }
+func (timeoutError) Timeout() bool { return true }
+
 // The HTTP layer answers each kind of request with the status code that
 // tells Alertmanager what to do, and serves nothing beyond the configured
 // webhook paths and the health checks.
@@ -50,7 +58,17 @@ func TestServer(t *testing.T) {
 		{name: "valid message", method: http.MethodPost, path: webhookPath, body: string(validMessage), wantStatus: http.StatusOK, wantCalls: 1},
 		{name: "invalid JSON", method: http.MethodPost, path: webhookPath, body: `{"version": "4",`, wantStatus: http.StatusBadRequest},
 		{name: "JSON that is not an Alertmanager message", method: http.MethodPost, path: webhookPath, body: `{"hello": "world"}`, wantStatus: http.StatusBadRequest},
-		{name: "service fails", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: errors.New("teams said no"), wantStatus: http.StatusInternalServerError, wantCalls: 1},
+		// A failed delivery: the answer tells Alertmanager whether to retry
+		// (5xx) or not (4xx).
+		{name: "card cannot be built", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: fmt.Errorf("%w: bad template", service.ErrCard), wantStatus: http.StatusUnprocessableEntity, wantCalls: 1},
+		{name: "teams 404: Workflow deleted", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: &service.TeamsError{StatusCode: http.StatusNotFound}, wantStatus: http.StatusUnprocessableEntity, wantCalls: 1},
+		{name: "teams 400: card rejected", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: &service.TeamsError{StatusCode: http.StatusBadRequest}, wantStatus: http.StatusUnprocessableEntity, wantCalls: 1},
+		{name: "teams 413: card too large", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: &service.TeamsError{StatusCode: http.StatusRequestEntityTooLarge}, wantStatus: http.StatusUnprocessableEntity, wantCalls: 1},
+		{name: "teams 429: throttled", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: &service.TeamsError{StatusCode: http.StatusTooManyRequests}, wantStatus: http.StatusBadGateway, wantCalls: 1},
+		{name: "teams 503", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: &service.TeamsError{StatusCode: http.StatusServiceUnavailable}, wantStatus: http.StatusBadGateway, wantCalls: 1},
+		{name: "teams not answering in time", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: fmt.Errorf("sending to Teams failed: %w", context.DeadlineExceeded), wantStatus: http.StatusGatewayTimeout, wantCalls: 1},
+		{name: "network timeout", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: timeoutError{}, wantStatus: http.StatusGatewayTimeout, wantCalls: 1},
+		{name: "teams unreachable", method: http.MethodPost, path: webhookPath, body: string(validMessage), serviceErr: errors.New("sending to Teams failed: connection refused"), wantStatus: http.StatusBadGateway, wantCalls: 1},
 		{name: "GET on the webhook path", method: http.MethodGet, path: webhookPath, wantStatus: http.StatusMethodNotAllowed},
 		{name: "unknown path", method: http.MethodPost, path: "/other", body: string(validMessage), wantStatus: http.StatusNotFound},
 

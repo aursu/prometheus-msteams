@@ -179,8 +179,8 @@ func TestPost_cardFails(t *testing.T) {
 	_, err := NewSimpleService(fixedCard{err: errors.New("bad template")}, http.DefaultClient, u).
 		Post(context.Background(), webhook.Message{})
 
-	if err == nil || !strings.Contains(err.Error(), "bad template") {
-		t.Fatalf("Post() error = %v, want the card error", err)
+	if !errors.Is(err, ErrCard) || !strings.Contains(err.Error(), "bad template") {
+		t.Fatalf("Post() error = %v, want ErrCard with the cause", err)
 	}
 	if *calls != 0 {
 		t.Errorf("Teams called %d times, want 0", *calls)

@@ -2,7 +2,9 @@
 package transport
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -94,8 +96,9 @@ func addRoute(e *echo.Echo, p string, s service.Service, logger log.Logger) {
 
 // handleRoute reads the Alertmanager message from the request and passes it
 // to the Service. The status code tells Alertmanager what to do next: it
-// retries a 5xx later, but not a 4xx. A malformed request is answered 400,
-// since sending the same bytes again cannot succeed.
+// retries a 5xx later, but not a 4xx (it counts that notification as
+// failed). A malformed request is answered 400, since sending the same bytes
+// again cannot succeed; a failed delivery as statusFor decides.
 func handleRoute(c echo.Context, s service.Service, logger log.Logger) error {
 	ctx, span := trace.StartSpan(c.Request().Context(), "alertmanager-handler")
 	defer span.End()
@@ -125,10 +128,44 @@ func handleRoute(c echo.Context, s service.Service, logger log.Logger) error {
 
 	prs, err := s.Post(ctx, wm)
 	if err != nil {
-		logger.Log("err", err)
-		span.SetStatus(trace.Status{Code: 500, Message: err.Error()})
-		return c.String(500, err.Error())
+		status := statusFor(err)
+		logger.Log("err", err, "status", status)
+		span.SetStatus(trace.Status{Code: int32(status), Message: err.Error()})
+		// Alertmanager logs this text; it never contains the webhook URL.
+		return c.String(status, err.Error())
 	}
 
-	return c.JSON(200, prs)
+	return c.JSON(http.StatusOK, prs)
+}
+
+// statusFor chooses the answer to Alertmanager for a failed delivery:
+//
+//	422 Unprocessable Entity  the card cannot be built, or Teams refused
+//	                          it for good (4xx except 429: Workflow deleted,
+//	                          card rejected, too large) - do not retry
+//	504 Gateway Timeout       Teams did not answer in time - retry later
+//	502 Bad Gateway           Teams answered 429 or 5xx, or could not be
+//	                          reached - retry later
+//
+// 422 rather than Teams' own 4xx: a 404 from this service would read as
+// "wrong path on this service".
+func statusFor(err error) int {
+	if errors.Is(err, service.ErrCard) {
+		return http.StatusUnprocessableEntity
+	}
+	var te *service.TeamsError
+	if errors.As(err, &te) {
+		if te.Retryable() {
+			return http.StatusBadGateway
+		}
+		return http.StatusUnprocessableEntity
+	}
+	// A timeout is either the context deadline or a network error that
+	// says so: such errors have a method Timeout() bool. The anonymous
+	// interface type below matches any error with that method.
+	var timeout interface{ Timeout() bool }
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &timeout) && timeout.Timeout()) {
+		return http.StatusGatewayTimeout
+	}
+	return http.StatusBadGateway
 }

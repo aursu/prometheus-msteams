@@ -27,6 +27,12 @@ type PostResponse struct {
 	Message string `json:"message"`
 }
 
+// ErrCard marks a failure to build the card from the alert group (template
+// error, output Teams would not accept). Nothing was sent, and the same
+// alert group fails the same way again. Callers test for it with
+// errors.Is(err, ErrCard).
+var ErrCard = errors.New("failed to build the card")
+
 // maxResponseBody is how much of a Teams response body is kept, in success
 // and error alike; enough for an error message, bounded for logs.
 const maxResponseBody = 512
@@ -79,7 +85,9 @@ func (s simpleService) Post(ctx context.Context, wm webhook.Message) ([]PostResp
 
 	c, err := s.converter.Convert(ctx, wm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build the card: %w", err)
+		// Two %w wrap both errors: the result "is" ErrCard and still
+		// carries the cause, e.g. "failed to build the card: <cause>".
+		return nil, fmt.Errorf("%w: %w", ErrCard, err)
 	}
 
 	pr, err := s.post(ctx, c)

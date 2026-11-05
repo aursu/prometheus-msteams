@@ -51,7 +51,7 @@ func (s simpleService) Post(ctx context.Context, wm webhook.Message) ([]PostResp
 
 	prs := []PostResponse{}
 
-	c, err := s.converter.ConvertWorkflow(ctx, wm)
+	c, err := s.converter.Convert(ctx, wm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse webhook message: %w", err)
 	}

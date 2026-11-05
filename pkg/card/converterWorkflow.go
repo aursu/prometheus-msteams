@@ -42,7 +42,7 @@ type WorkflowConnectorCard struct {
 	Attachments []AdaptiveCardItem `json:"attachments"`
 }
 
-func (l loggingMiddleware) ConvertWorkflow(ctx context.Context, a webhook.Message) (c WorkflowConnectorCard, err error) {
+func (l loggingMiddleware) Convert(ctx context.Context, a webhook.Message) (c WorkflowConnectorCard, err error) {
 	defer func(begin time.Time) {
 		for _, attachment := range c.Attachments {
 			if len(attachment.Content.Actions) > 5 {
@@ -59,5 +59,5 @@ func (l loggingMiddleware) ConvertWorkflow(ctx context.Context, a webhook.Messag
 			"took", time.Since(begin),
 		)
 	}(time.Now())
-	return l.next.ConvertWorkflow(ctx, a)
+	return l.next.Convert(ctx, a)
 }

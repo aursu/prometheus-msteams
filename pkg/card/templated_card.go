@@ -30,12 +30,12 @@ func NewTemplatedCardCreator(template *template.Template, escapeUnderscores bool
 	return &templatedCard{template, escapeUnderscores}
 }
 
-// ConvertWorkflow renders the template "teams.card" with the alert group and
+// Convert renders the template "teams.card" with the alert group and
 // parses the result as JSON. A template that produces invalid JSON, or JSON
 // whose top-level type is not "message", is an error here, before anything is
 // sent to Teams.
-func (m *templatedCard) ConvertWorkflow(ctx context.Context, promAlert webhook.Message) (WorkflowConnectorCard, error) {
-	_, span := trace.StartSpan(ctx, "templatedCard.ConvertWorkflow")
+func (m *templatedCard) Convert(ctx context.Context, promAlert webhook.Message) (WorkflowConnectorCard, error) {
+	_, span := trace.StartSpan(ctx, "templatedCard.Convert")
 	defer span.End()
 
 	cardString, err := m.executeTemplate(promAlert)

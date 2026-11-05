@@ -10,7 +10,7 @@ import (
 
 const testTextBlockType = "TextBlock"
 
-func Test_templatedCard_ConvertWorkflow(t *testing.T) {
+func Test_templatedCard_Convert(t *testing.T) {
 	tests := []struct {
 		name          string
 		promAlertFile string
@@ -117,9 +117,9 @@ func Test_templatedCard_ConvertWorkflow(t *testing.T) {
 
 			m := NewTemplatedCardCreator(tmpl, false)
 
-			got, err := m.ConvertWorkflow(context.Background(), a)
+			got, err := m.Convert(context.Background(), a)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("templatedCard.ConvertWorkflow() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("templatedCard.Convert() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 

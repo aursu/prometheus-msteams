@@ -20,11 +20,11 @@ type Action map[string]interface{}
 // (A Go interface lists the methods a type must have; any type that has them
 // satisfies the interface automatically, without an "implements" keyword.)
 type Converter interface {
-	ConvertWorkflow(context.Context, webhook.Message) (WorkflowConnectorCard, error)
+	Convert(context.Context, webhook.Message) (WorkflowConnectorCard, error)
 }
 
 // loggingMiddleware wraps another Converter and logs every conversion
-// (decorator pattern). Its ConvertWorkflow method is in converterWorkflow.go.
+// (decorator pattern). Its Convert method is in converterWorkflow.go.
 type loggingMiddleware struct {
 	logger log.Logger
 	next   Converter

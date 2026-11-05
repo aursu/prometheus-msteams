@@ -11,11 +11,11 @@ import (
 	"os"
 	"testing"
 
+	"github.com/aursu/prometheus-msteams/pkg/card"
+	"github.com/aursu/prometheus-msteams/pkg/service"
+	"github.com/aursu/prometheus-msteams/pkg/testutils"
+	"github.com/aursu/prometheus-msteams/pkg/transport"
 	"github.com/go-kit/kit/log"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/card"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/service"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/testutils"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/transport"
 )
 
 var update = flag.Bool("update", false, "update .golden files")

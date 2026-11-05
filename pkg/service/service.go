@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/card"
+	"github.com/aursu/prometheus-msteams/pkg/card"
 	"github.com/prometheus/alertmanager/notify/webhook"
 	"go.opencensus.io/trace"
 )

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aursu/prometheus-msteams/pkg/testutils"
 	"github.com/google/go-cmp/cmp"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/testutils"
 )
 
 const (

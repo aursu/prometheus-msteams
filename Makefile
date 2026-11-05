@@ -11,7 +11,7 @@ GOFMT_FILES?=$$(find . -name '*.go')
 GO := GO111MODULE=on go
 
 # Symlink into GOPATH
-GITHUB_USERNAME=prometheus-msteams
+GITHUB_USERNAME=aursu
 BUILD_DIR=$(GOPATH)/src/github.com/$(GITHUB_USERNAME)/$(BINARY)
 VERSION_PKG=github.com/$(GITHUB_USERNAME)/prometheus-msteams/pkg/version
 

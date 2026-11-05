@@ -16,8 +16,8 @@ import (
 	"go.opencensus.io/plugin/ochttp"
 	"go.opencensus.io/trace"
 
+	"github.com/aursu/prometheus-msteams/pkg/service"
 	"github.com/labstack/echo/v4"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/service"
 )
 
 // Route holds the Service implementation and the Request path to serve the Service.

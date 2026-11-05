@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/testutils"
+	"github.com/aursu/prometheus-msteams/pkg/testutils"
 	"github.com/prometheus/alertmanager/notify/webhook"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/santhosh-tekuri/jsonschema/v6/kind"

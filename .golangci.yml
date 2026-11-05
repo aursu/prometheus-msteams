@@ -53,7 +53,7 @@ linters:
             - github.com/prometheus/alertmanager/notify/webhook
             - github.com/prometheus/alertmanager/template
             - github.com/prometheus/client_golang/prometheus
-            - github.com/prometheus-msteams/prometheus-msteams
+            - github.com/aursu/prometheus-msteams
             - gopkg.in/yaml.v2
             - k8s.io/helm/pkg/engine
     errcheck:

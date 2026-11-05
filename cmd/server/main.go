@@ -18,11 +18,11 @@ import (
 	"github.com/pkg/errors"
 
 	ocprometheus "contrib.go.opencensus.io/exporter/prometheus"
+	"github.com/aursu/prometheus-msteams/pkg/card"
+	"github.com/aursu/prometheus-msteams/pkg/service"
+	"github.com/aursu/prometheus-msteams/pkg/transport"
+	"github.com/aursu/prometheus-msteams/pkg/version"
 	"github.com/labstack/echo/v4"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/card"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/service"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/transport"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/version"
 	stdprometheus "github.com/prometheus/client_golang/prometheus"
 
 	"contrib.go.opencensus.io/exporter/jaeger"

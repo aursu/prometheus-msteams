@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aursu/prometheus-msteams/pkg/service"
 	"github.com/go-kit/kit/log"
-	"github.com/prometheus-msteams/prometheus-msteams/pkg/service"
 	"github.com/prometheus/alertmanager/notify/webhook"
 )
 

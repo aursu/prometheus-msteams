@@ -1,0 +1,24 @@
+# Dependabot, built into GitHub, opens pull requests that update the
+# dependencies listed here. Minor and patch updates of Go modules come as one
+# grouped pull request a week; each major update comes on its own.
+# GitHub Actions are added here together with the CI workflows.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build

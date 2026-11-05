@@ -9,10 +9,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/prometheus/alertmanager/notify/webhook"
 	"github.com/prometheus/alertmanager/template"
 	"go.opencensus.io/trace"
-	"k8s.io/helm/pkg/engine"
+	"go.yaml.in/yaml/v3"
 )
 
 // What a Teams Workflow accepts: a message whose attachments are Adaptive
@@ -161,28 +162,14 @@ func jsonEscapeMessage(promAlert webhook.Message) webhook.Message {
 	return retPromAlert
 }
 
-/*
-	ParseTemplateFile creates an alertmanager template from the given file.
-
-The functions include all functions (except 'env' and 'expandenv' ) from sprig (http://masterminds.github.io/sprig/)
-and the following functions from HELM templating:
-  - toToml
-  - toYaml
-  - fromYaml
-  - toJson
-  - fromJson
-*/
+// ParseTemplateFile creates an Alertmanager template from the given file. The
+// template can use Alertmanager's own functions and those of extraFuncs.
 func ParseTemplateFile(f string) (*template.Template, error) {
+	// Alertmanager builds every template with template.DefaultFuncs, a
+	// package-level map; the extra functions are added to it.
 	funcs := template.DefaultFuncs
-	for k, v := range engine.FuncMap() {
+	for k, v := range extraFuncs() {
 		funcs[k] = v
-	}
-	funcs["counter"] = func() func() int {
-		i := -1
-		return func() int {
-			i++
-			return i
-		}
 	}
 	template.DefaultFuncs = funcs
 
@@ -196,4 +183,53 @@ func ParseTemplateFile(f string) (*template.Template, error) {
 	}
 
 	return tmpl, nil
+}
+
+// extraFuncs are the template functions added to Alertmanager's own; where a
+// name exists in both, this one is used:
+//   - the sprig library (https://masterminds.github.io/sprig/), the same
+//     functions Helm charts use, except env and expandenv
+//   - toYaml and fromYaml, as in Helm
+//   - counter: {{ $c := counter }}{{ call $c }} gives 0, 1, 2, ...
+//
+// (Before, the functions came from Helm 2's template engine, which also
+// had toToml; Helm 2 is no longer maintained.)
+func extraFuncs() map[string]any {
+	funcs := sprig.TxtFuncMap()
+	// A template must not read the environment of this process: it may
+	// hold secrets, and the card goes to a chat channel.
+	delete(funcs, "env")
+	delete(funcs, "expandenv")
+
+	funcs["toYaml"] = toYaml
+	funcs["fromYaml"] = fromYaml
+	// counter returns a new function (a closure: it keeps its own i between
+	// calls) that counts up from 0 each time it is called.
+	funcs["counter"] = func() func() int {
+		i := -1
+		return func() int {
+			i++
+			return i
+		}
+	}
+	return funcs
+}
+
+// toYaml renders v as YAML; on error it gives "", as in Helm.
+func toYaml(v any) string {
+	b, err := yaml.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// fromYaml parses a YAML mapping; on error the result holds only the key
+// "Error" with the message, as in Helm.
+func fromYaml(s string) map[string]any {
+	m := map[string]any{}
+	if err := yaml.Unmarshal([]byte(s), &m); err != nil {
+		m["Error"] = err.Error()
+	}
+	return m
 }

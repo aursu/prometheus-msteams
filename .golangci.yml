@@ -53,7 +53,7 @@ linters:
             - github.com/prometheus/client_golang/prometheus
             - github.com/aursu/prometheus-msteams
             - go.yaml.in/yaml/v3
-            - k8s.io/helm/pkg/engine
+            - github.com/Masterminds/sprig/v3
     errcheck:
       exclude-functions:
         - (github.com/go-kit/kit/log.Logger).Log

@@ -143,7 +143,7 @@ connectors_with_custom_templates:
 - request_path: /with_buttons
   template_file: ./examples/templates/default-message-workflow-card-actions.tmpl
   webhook_url: "https://...workflow URL 3..."
-  escape_underscores: true   # as -auto-escape-underscores
+  escape_underscores: false  # as -auto-escape-underscores; see Card templates
 ```
 
 ```bash
@@ -201,10 +201,28 @@ Functions available in templates:
   and `expandenv`: a template cannot read the environment of the process
 - `toYaml`, `fromYaml`, as in Helm
 - `counter`: `{{ $c := counter }}{{ call $c }}` gives 0, 1, 2, ...
+- `mdEscape`: escapes `\`, `*`, `_`, `[` and `]`, so that Teams' markdown
+  shows a value as it is (`high_memory_load`, not italics)
+- `labelMatchers`: labels as an Alertmanager filter,
+  `{alertname="HighLoad", severity="warning"}`, for links to Alertmanager
 
-`-auto-escape-underscores` (on by default) turns every `_` in label and
-annotation values into `\_` before rendering, so that Teams' markdown does
-not read it as italics. It also changes `_` in values used to build URLs.
+Escape each label or annotation value where the template writes it:
+
+```
+"text":  {{ .CommonAnnotations.summary | mdEscape | toJson }},
+"url":   {{ .CommonAnnotations.runbook | toJson }},
+"url":   {{ printf "%s/#/alerts?filter=%s" .ExternalURL (labelMatchers .CommonLabels | urlquery) | toJson }}
+```
+
+`toJson` writes the value as a JSON string, quotes included, so that
+quotes and line breaks in it cannot break the card; a link gets no
+`mdEscape`. A card that is not valid JSON is not sent (answer 422).
+
+`-auto-escape-underscores` (off by default) is for older templates that
+write values unescaped: before rendering, it JSON-escapes every label and
+annotation value and turns `_` into `\_`. That also changes values used in
+links. Do not combine it with templates that escape themselves, such as
+the ones here: the text would show extra backslashes.
 
 ## Metrics and health checks
 
@@ -228,7 +246,7 @@ plus the Go runtime and process metrics.
 
 ```
   -auto-escape-underscores
-    	Automatically replace all '_' with '\_' from texts in the alert. (default true)
+    	Before rendering, JSON-escape every label and annotation value and replace '_' with '\_'. Only for templates that do not escape values themselves.
   -config-file string
     	The connectors configuration file.
   -debug

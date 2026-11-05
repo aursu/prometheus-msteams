@@ -13,7 +13,9 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/alertmanager v0.34.1
 	github.com/prometheus/client_golang v1.24.1
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	go.opencensus.io v0.24.0
+	golang.org/x/text v0.41.0
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/helm v2.17.0+incompatible
 )
@@ -102,7 +104,6 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/api v0.84.0 // indirect

@@ -1,17 +1,20 @@
 {{ define "teams.card" }}
 
 {{- $cardHeadingLineColor := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAAAAABqswrmAAAAEElEQVR42mJogEBAAAAA//8ICAIBsBUbsAAAAABJRU5ErkJggg==" }}
-{{- $headingColor := "" }}
+{{- /* Heading colour: "=" assigns the variable declared here; ":=" inside
+       the if blocks would declare a new one that dies with the block, which
+       left the heading colour always empty. "Default" when nothing matches. */ -}}
+{{- $headingColor := "Default" }}
 {{- if eq .Status "resolved" -}}
   {{- $cardHeadingLineColor = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mLQPa6LjAEBAAD//yQwBIUSNPBIAAAAAElFTkSuQmCC" -}}
-  {{- $headingColor := "Good" }}
+  {{- $headingColor = "Good" }}
 {{- else if eq .Status "firing" -}}
   {{- if eq .CommonLabels.severity "critical" -}}
   {{- $cardHeadingLineColor = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mLokZJCxoAAAAD//xnYAwEPSWrRAAAAAElFTkSuQmCC" }}
-  {{- $headingColor := "Attention" }}
+  {{- $headingColor = "Attention" }}
   {{- else if eq .CommonLabels.severity "warning" -}}
   {{- $cardHeadingLineColor = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mL4v5QBGQMCAAD//ziMBpHr7M3UAAAAAElFTkSuQmCC" }}
-  {{- $headingColor := "warning" }}
+  {{- $headingColor = "Warning" }}
   {{- end -}}
 {{- end -}}
 
@@ -68,13 +71,16 @@
             {
               "type": "FactSet",
               "facts": [
+                {{- /* One fact per annotation except "description" (shown
+                       above). The whole fact, braces included, is inside the
+                       if; before, "description" produced an empty {}. */ -}}
                 {{- range $key, $value := $alert.Annotations }}
+                {{- if ne $key "description" }}
                 {
-                  {{- if ne $key "description" -}}
                     "title": "{{ $key }}",
                     "value": "{{ $value }}"
-                  {{- end -}}
                 },
+                {{- end -}}
                 {{- end -}}
                 {{$c := counter}}{{ range $key, $value := $alert.Labels }}{{if call $c}},{{ end }}
                 {

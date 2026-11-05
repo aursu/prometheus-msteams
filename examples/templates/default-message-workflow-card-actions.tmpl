@@ -7,17 +7,21 @@
 {{ $alertkarma_prefix := ""}}
 
 {{- $cardHeadingLineColor := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAAAAABqswrmAAAAEElEQVR42mJogEBAAAAA//8ICAIBsBUbsAAAAABJRU5ErkJggg==" }}
-{{- $headingColor := "" }}
+{{- /* Heading colour: "=" assigns the variable declared here; ":=" inside
+       the if blocks would declare a new one that dies with the block, which
+       left the heading colour always empty. "Default" when nothing matches.
+       Severity labels are lower case ("warning", not "Warning"). */ -}}
+{{- $headingColor := "Default" }}
 {{- if eq .Status "resolved" -}}
   {{- $cardHeadingLineColor = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mLQPa6LjAEBAAD//yQwBIUSNPBIAAAAAElFTkSuQmCC" -}}
-  {{- $headingColor := "Good" }}
+  {{- $headingColor = "Good" }}
 {{- else if eq .Status "firing" -}}
   {{- if eq .CommonLabels.severity "critical" -}}
   {{- $cardHeadingLineColor = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mLokZJCxoAAAAD//xnYAwEPSWrRAAAAAElFTkSuQmCC" }}
-  {{- $headingColor := "Attention" }}
-  {{- else if eq .CommonLabels.severity "Warning" -}}
+  {{- $headingColor = "Attention" }}
+  {{- else if eq .CommonLabels.severity "warning" -}}
   {{- $cardHeadingLineColor = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mL4v5QBGQMCAAD//ziMBpHr7M3UAAAAAElFTkSuQmCC" }}
-  {{- $headingColor := "warning" }}
+  {{- $headingColor = "Warning" }}
   {{- end -}}
 {{- end -}}
 
@@ -74,13 +78,16 @@
             {
               "type": "FactSet",
               "facts": [
+                {{- /* One fact per annotation except "description" (shown
+                       above). The whole fact, braces included, is inside the
+                       if; before, "description" produced an empty {}. */ -}}
                 {{- range $key, $value := $alert.Annotations }}
+                {{- if ne $key "description" }}
                 {
-                  {{- if ne $key "description" -}}
                     "title": "{{ $key }}",
                     "value": "{{ $value }}"
-                  {{- end -}}
                 },
+                {{- end -}}
                 {{- end -}}
                 {{$c := counter}}{{ range $key, $value := $alert.Labels }}{{if call $c}},{{ end }}
                 {
@@ -95,17 +102,21 @@
         {{ if $should_have_potential_actions }}
         ,
         "actions": [
+          {{- /* urlquery encodes label names and values for the URL. Known
+                 limitation: with -auto-escape-underscores (on by default) the
+                 values arrive as "a\_b", so the filter does not match; to be
+                 fixed by escaping at the point of use. */}}
           {
               "type": "Action.OpenUrl",
               "title": "View in Alertmanager",
-              "url": "{{ .ExternalURL }}/#?alerts/silenced=true&inhibited=true&active=true&filter=%7B{{$c := counter}}{{ range $key, $value := .CommonLabels }}{{if call $c}}%22%2C%20{{ end }}{{ $key }}%3D%22{{ $value }}{{- end }}%22%7D"
+              "url": "{{ .ExternalURL }}/#?alerts/silenced=true&inhibited=true&active=true&filter=%7B{{$c := counter}}{{ range $key, $value := .CommonLabels }}{{if call $c}}%22%2C%20{{ end }}{{ $key | urlquery }}%3D%22{{ $value | urlquery }}{{- end }}%22%7D"
           }
         {{ if gt (len $alertkarma_prefix) 0 }}
           ,
           {
             "type": "Action.OpenUrl",
             "title": "View in Alertkarma",
-            "uri": "{{ $alertkarma_prefix }}q=alertname%3D{{ .CommonLabels.alertname }}"
+            "url": "{{ $alertkarma_prefix }}q=alertname%3D{{ .CommonLabels.alertname }}"
           }
         {{ end }}
         {{ if gt (len .CommonAnnotations.investigate_link) 0 }}
@@ -113,7 +124,7 @@
           {
             "type": "Action.OpenUrl",
             "title": "Investigate",
-            "uri": "{{- .CommonAnnotations.investigate_link | trim -}}"
+            "url": "{{- .CommonAnnotations.investigate_link | trim -}}"
           }
         {{ end }}
         {{- if .CommonAnnotations.runbook -}}

@@ -31,8 +31,6 @@ import (
 	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
 
-	_ "net/http/pprof" //nolint: gosec
-
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/oklog/run"
@@ -296,7 +294,6 @@ func main() { //nolint: funlen
 	httpClient := retryClient.StandardClient()
 
 	var routes []transport.Route
-	var dRoutes []transport.DynamicRoute
 
 	// Connectors from flags.
 	if len(*requestURI) > 0 && len(*teamsWebhookURL) > 0 {
@@ -308,33 +305,8 @@ func main() { //nolint: funlen
 		)
 	}
 
-	{ // dynamic uri handler: webhook uri is retrieved from request.URL
-		var r transport.DynamicRoute
-		r.RequestPath = "/_dynamicwebhook/*"
-		r.ServiceGenerator = func(c echo.Context) (service.Service, error) {
-			webhook, err := extractWebhookFromRequest(c.Request(), "/_dynamicwebhook/")
-			if err != nil {
-				err = errors.Wrapf(err, "webhook extraction failed for /_dynamicwebhook/")
-				logger.Log("err", err)
-				return nil, err
-			}
-
-			err = validateWebhook(webhook)
-			if *validateWebhookURL && err != nil {
-				err = errors.Wrapf(err, "webhook validation failed for /_dynamicwebhook/")
-				logger.Log("err", err)
-				return nil, err
-			}
-
-			var s service.Service
-			s = service.NewSimpleService(defaultConverter, httpClient, webhook)
-			s = service.NewLoggingService(logger, s)
-			return s, nil
-		}
-		dRoutes = append(dRoutes, r)
-	}
-
-	// Connectors from config file.
+	// Connectors from config file. Every Teams URL comes from the
+	// configuration; there is no route that takes the URL from the request.
 	for _, c := range tc.Connectors {
 		for uri, webhook := range c {
 			err := validateWebhook(webhook)
@@ -421,19 +393,15 @@ func main() { //nolint: funlen
 		os.Exit(1)
 	}
 
-	// Prometheus msteams HTTP handler setup.
+	// Prometheus msteams HTTP handler setup: the webhook routes and health
+	// checks (transport.NewServer) plus the metrics. Nothing else is served:
+	// the profiler (/debug/pprof) and /config, which listed the Teams URLs
+	// with their signatures, are gone.
 	var handler *echo.Echo
 	{
-		// Main app.
-		handler = transport.NewServer(logger, routes, dRoutes)
+		handler = transport.NewServer(logger, routes)
 		// Prometheus metrics.
 		handler.GET("/metrics", echo.WrapHandler(pe))
-		// Pprof.
-		handler.GET("/debug/pprof/*", echo.WrapHandler(http.DefaultServeMux))
-		// Config.
-		handler.GET("/config", func(c echo.Context) error {
-			return c.JSON(200, tc.Connectors)
-		})
 	}
 
 	var g run.Group
@@ -547,32 +515,4 @@ func checkDuplicateRequestPath(routes []transport.Route) error {
 		added[r.RequestPath] = true
 	}
 	return nil
-}
-
-const bearerType = "webhook"
-
-func extractWebhookFromRequest(request *http.Request, requestPathPrefix string) (string, error) {
-	var pathAndQuery string
-
-	// Query contains mandatory "api-version" for "worflow"
-	if len(request.URL.Query()) > 0 {
-		pathAndQuery = request.URL.Path + "?" + request.URL.RawQuery
-	} else {
-		pathAndQuery = request.URL.Path
-	}
-
-	pathAndQuery = strings.TrimPrefix(pathAndQuery, requestPathPrefix)
-	if pathAndQuery != "" {
-		return fmt.Sprintf("https://%s", pathAndQuery), nil
-	}
-	authHeader := request.Header.Get("Authorization")
-	if authHeader == "" {
-		return "", fmt.Errorf("neither webhook url nor bearer authorization present")
-	}
-
-	if !strings.HasPrefix(authHeader, bearerType) {
-		return "", fmt.Errorf("invalid bearer on authorization")
-	}
-	pathAndQuery = strings.TrimPrefix(authHeader, fmt.Sprintf("%s ", bearerType))
-	return fmt.Sprintf("https://%s", pathAndQuery), nil
 }

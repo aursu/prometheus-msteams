@@ -24,28 +24,34 @@ type Route struct {
 	RequestPath string
 }
 
-// DynamicRoute holds the Request path to generate the service based on request (e.g. path)
-type DynamicRoute struct {
-	ServiceGenerator ServiceGenerator
-	RequestPath      string
-}
-
-// ServiceGenerator creates a service on data from request (echo.Context)
-type ServiceGenerator func(echo.Context) (service.Service, error)
-
-// NewServer creates the web server.
-func NewServer(logger log.Logger, routes []Route, dRoutes []DynamicRoute) *echo.Echo {
+// NewServer creates the web server. It serves exactly:
+//   - POST on each route's RequestPath: an Alertmanager webhook message,
+//     handed to that route's Service
+//   - GET /-/healthy and GET /-/ready: health checks for Kubernetes probes
+//
+// (main adds GET /metrics.) Any other path is 404; another method on a
+// route path is 405.
+func NewServer(logger log.Logger, routes []Route) *echo.Echo {
 	e := echo.New()
 	for _, r := range routes {
 		level.Debug(logger).Log("request_path_added", r.RequestPath)
 		addRoute(e, r.RequestPath, r.Service, logger)
 	}
-	for _, r := range dRoutes {
-		level.Debug(logger).Log("request_path_added", r.RequestPath)
-		addContextAwareRoute(e, r.RequestPath, r.ServiceGenerator, logger)
-	}
+	addHealthChecks(e)
 	e.HideBanner = true
 	return e
+}
+
+// addHealthChecks registers the liveness and readiness endpoints, named as
+// in Prometheus and Alertmanager. Both always answer 200: the configuration
+// is read once at startup and an invalid one stops the program, so a process
+// that answers HTTP is both alive and ready.
+func addHealthChecks(e *echo.Echo) {
+	ok := func(c echo.Context) error {
+		return c.String(http.StatusOK, "OK")
+	}
+	e.GET("/-/healthy", ok)
+	e.GET("/-/ready", ok)
 }
 
 func opencensusMiddleware() echo.MiddlewareFunc {
@@ -86,22 +92,10 @@ func addRoute(e *echo.Echo, p string, s service.Service, logger log.Logger) {
 	)
 }
 
-func addContextAwareRoute(e *echo.Echo, p string, w ServiceGenerator, logger log.Logger) {
-	e.POST(p, func(c echo.Context) error {
-		s, err := w(c)
-		if err != nil {
-			return err
-		}
-		if s == nil {
-			return fmt.Errorf("invalid request. No service was returned")
-		}
-		return handleRoute(c, s, logger)
-	},
-		kitLoggerMiddleware(logger),
-		opencensusMiddleware(),
-	)
-}
-
+// handleRoute reads the Alertmanager message from the request and passes it
+// to the Service. The status code tells Alertmanager what to do next: it
+// retries a 5xx later, but not a 4xx. A malformed request is answered 400,
+// since sending the same bytes again cannot succeed.
 func handleRoute(c echo.Context, s service.Service, logger log.Logger) error {
 	ctx, span := trace.StartSpan(c.Request().Context(), "alertmanager-handler")
 	defer span.End()
@@ -118,15 +112,15 @@ func handleRoute(c echo.Context, s service.Service, logger log.Logger) error {
 	var wm webhook.Message
 	if err := json.Unmarshal(b, &wm); err != nil {
 		logger.Log("err", err)
-		span.SetStatus(trace.Status{Code: 500, Message: err.Error()})
-		return c.String(500, err.Error())
+		span.SetStatus(trace.Status{Code: http.StatusBadRequest, Message: err.Error()})
+		return c.String(http.StatusBadRequest, err.Error())
 	}
 
 	if wm.Data == nil || wm.Version == "" || wm.GroupKey == "" {
 		err = fmt.Errorf("the webhook message does not seem to be a valid Prometheus Alertmanager webhook. More information see https://prometheus.io/docs/alerting/latest/configuration/#webhook_config")
 		logger.Log("err", err)
-		span.SetStatus(trace.Status{Code: 500, Message: err.Error()})
-		return c.String(500, err.Error())
+		span.SetStatus(trace.Status{Code: http.StatusBadRequest, Message: err.Error()})
+		return c.String(http.StatusBadRequest, err.Error())
 	}
 
 	prs, err := s.Post(ctx, wm)

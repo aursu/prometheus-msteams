@@ -3,6 +3,8 @@ package card
 import (
 	"strings"
 	"testing"
+
+	"github.com/prometheus/alertmanager/template"
 )
 
 // The functions a card template can use beyond Alertmanager's own.
@@ -50,5 +52,64 @@ func Test_extraFuncs(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func Test_mdEscape(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{in: "plain text", want: "plain text"},
+		{in: "high_memory_load", want: `high\_memory\_load`},
+		{in: "**bold** and *it*", want: `\*\*bold\*\* and \*it\*`},
+		{in: "[text](https://example.org/a_b)", want: `\[text\](https://example.org/a\_b)`},
+		{in: `C:\path`, want: `C:\\path`},
+		{in: `already \_ escaped`, want: `already \\\_ escaped`},
+		{in: "", want: ""},
+	}
+	for _, tt := range tests {
+		if got := mdEscape(tt.in); got != tt.want {
+			t.Errorf("mdEscape(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func Test_labelMatchers(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels map[string]string
+		want   string
+	}{
+		{name: "sorted by name", labels: map[string]string{"severity": "warning", "alertname": "HighLoad"}, want: `{alertname="HighLoad", severity="warning"}`},
+		{name: "underscores stay", labels: map[string]string{"job": "node_exporter"}, want: `{job="node_exporter"}`},
+		{name: "quote and backslash", labels: map[string]string{"msg": `say "hi" \o/`}, want: `{msg="say \"hi\" \\o/"}`},
+		{name: "line break", labels: map[string]string{"msg": "a\nb"}, want: `{msg="a\nb"}`},
+		{name: "name that needs quotes", labels: map[string]string{"service.name": "api"}, want: `{"service.name"="api"}`},
+		{name: "no labels", labels: map[string]string{}, want: `{}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := labelMatchers(tt.labels); got != tt.want {
+				t.Errorf("labelMatchers() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// Both functions are available in templates, also with Alertmanager's own
+// label type (template.KV) as the argument.
+func Test_escapeFuncsInTemplates(t *testing.T) {
+	tmpl, err := ParseTemplateFile(writeTemplate(t, `{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := map[string]any{"Labels": template.KV{"alertname": "a_b", "job": `x"y`}}
+
+	got, err := tmpl.ExecuteTextString(`{{ .Labels.alertname | mdEscape | toJson }} {{ labelMatchers .Labels | urlquery }}`, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// toJson doubles the backslash: in JSON, \\ stands for one \.
+	want := `"a\\_b" %7Balertname%3D%22a_b%22%2C+job%3D%22x%5C%22y%22%7D`
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }

@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Masterminds/sprig/v3"
@@ -189,9 +193,20 @@ func ParseTemplateFile(f string) (*template.Template, error) {
 //     functions Helm charts use, except env and expandenv
 //   - toYaml and fromYaml, as in Helm
 //   - counter: {{ $c := counter }}{{ call $c }} gives 0, 1, 2, ...
+//   - mdEscape and labelMatchers, see below
 //
 // (Before, the functions came from Helm 2's template engine, which also
 // had toToml; Helm 2 is no longer maintained.)
+//
+// Escaping belongs where a value is used, because each place needs its
+// own: a card text needs mdEscape and then toJson, a link only toJson (or
+// urlquery for a part of it). For example
+//
+//	"text": {{ .CommonAnnotations.summary | mdEscape | toJson }},
+//	"url": {{ .CommonAnnotations.runbook | toJson }}
+//
+// (toJson writes the value as a JSON string, quotes included, so that
+// quotes and line breaks in it cannot break the card.)
 func extraFuncs() map[string]any {
 	funcs := sprig.TxtFuncMap()
 	// A template must not read the environment of this process: it may
@@ -210,8 +225,56 @@ func extraFuncs() map[string]any {
 			return i
 		}
 	}
+	funcs["mdEscape"] = mdEscape
+	funcs["labelMatchers"] = labelMatchers
 	return funcs
 }
+
+// markdownEscaper puts a backslash before each character that Teams'
+// markdown in card texts would read as formatting: "_" and "*" (italics,
+// bold), "[" and "]" (links), and the backslash itself.
+var markdownEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	`*`, `\*`,
+	`_`, `\_`,
+	`[`, `\[`,
+	`]`, `\]`,
+)
+
+// mdEscape makes s show as it is in a card text: "high_memory_load" stays
+// that, instead of "high" + italic "memory" + "load".
+func mdEscape(s string) string {
+	return markdownEscaper.Replace(s)
+}
+
+// labelMatchers writes labels as an Alertmanager filter, the form the
+// Alertmanager web interface takes in its "filter" parameter:
+//
+//	{alertname="HighLoad", severity="warning"}
+//
+// Names are sorted, so the result is the same each time. Values are quoted
+// with Go's string quoting (strconv.Quote), which escapes quotes,
+// backslashes and line breaks as Alertmanager expects. A name that is not a
+// classic Prometheus label name is quoted too. In a URL, pass the result
+// through urlquery.
+func labelMatchers(labels map[string]string) string {
+	// maps.Keys gives the names in random order (Go maps have none);
+	// slices.Sorted collects and sorts them.
+	names := slices.Sorted(maps.Keys(labels))
+	matchers := make([]string, 0, len(names))
+	for _, name := range names {
+		n := name
+		if !classicLabelName.MatchString(name) {
+			n = strconv.Quote(name)
+		}
+		matchers = append(matchers, n+"="+strconv.Quote(labels[name]))
+	}
+	return "{" + strings.Join(matchers, ", ") + "}"
+}
+
+// classicLabelName is the form of a Prometheus label name that needs no
+// quotes.
+var classicLabelName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // toYaml renders v as YAML; on error it gives "", as in Helm.
 func toYaml(v any) string {

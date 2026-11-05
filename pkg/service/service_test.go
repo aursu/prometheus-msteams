@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/prometheus/alertmanager/notify/webhook"
@@ -44,6 +45,39 @@ func fakeTeams(t *testing.T, status int, body string) (webhookURL string, calls 
 	return srv.URL + "/workflows/x/triggers/manual/paths/invoke?sig=" + testSig, calls
 }
 
+// silentTeams plays a Teams that accepts the request but never answers: each
+// request waits until the client gives up.
+func silentTeams(t *testing.T) (webhookURL string, calls *int) {
+	t.Helper()
+	calls = new(int)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*calls++
+		// Go's server notices that the client went away (and cancels
+		// r.Context()) only once the request body has been read to the end.
+		_, _ = io.Copy(io.Discard, r.Body)
+		// select waits for whichever comes first; the 5s case only keeps a
+		// broken test from hanging.
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/workflows/x/triggers/manual/paths/invoke?sig=" + testSig, calls
+}
+
+// retryClient returns a retry client configured as in main, with retryMax
+// retries and a short wait between them.
+func retryClient(retryMax int) *http.Client {
+	rc := retryablehttp.NewClient()
+	rc.Logger = nil
+	rc.RetryMax = retryMax
+	rc.RetryWaitMin = 10 * time.Millisecond
+	rc.RetryWaitMax = 10 * time.Millisecond
+	rc.ErrorHandler = retryablehttp.PassthroughErrorHandler
+	return rc.StandardClient()
+}
+
 // Every Teams answer is classified: 2xx is delivered, anything else is a
 // *TeamsError that says whether a later retry can help.
 func TestPost_teamsAnswers(t *testing.T) {
@@ -67,7 +101,7 @@ func TestPost_teamsAnswers(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			u, calls := fakeTeams(t, tt.status, tt.body)
-			s := NewSimpleService(fixedCard{}, http.DefaultClient, u)
+			s := NewSimpleService(fixedCard{}, http.DefaultClient, u, 0)
 
 			prs, err := s.Post(context.Background(), webhook.Message{})
 
@@ -108,7 +142,7 @@ func TestPost_teamsAnswers(t *testing.T) {
 // A long Teams answer is cut to maxResponseBody bytes.
 func TestPost_longAnswerIsCut(t *testing.T) {
 	u, _ := fakeTeams(t, http.StatusBadRequest, strings.Repeat("x", 10*maxResponseBody))
-	_, err := NewSimpleService(fixedCard{}, http.DefaultClient, u).Post(context.Background(), webhook.Message{})
+	_, err := NewSimpleService(fixedCard{}, http.DefaultClient, u, 0).Post(context.Background(), webhook.Message{})
 
 	var te *TeamsError
 	if !errors.As(err, &te) {
@@ -125,12 +159,8 @@ func TestPost_longAnswerIsCut(t *testing.T) {
 // contains the full URL.
 func TestPost_throughRetryClient(t *testing.T) {
 	u, calls := fakeTeams(t, http.StatusServiceUnavailable, "busy")
-	rc := retryablehttp.NewClient()
-	rc.Logger = nil
-	rc.RetryMax = 0
-	rc.ErrorHandler = retryablehttp.PassthroughErrorHandler
 
-	_, err := NewSimpleService(fixedCard{}, rc.StandardClient(), u).Post(context.Background(), webhook.Message{})
+	_, err := NewSimpleService(fixedCard{}, retryClient(0), u, 0).Post(context.Background(), webhook.Message{})
 
 	var te *TeamsError
 	if !errors.As(err, &te) || te.StatusCode != http.StatusServiceUnavailable {
@@ -152,12 +182,7 @@ func TestPost_unreachable(t *testing.T) {
 	u := closed.URL + "/workflows/x/triggers/manual/paths/invoke?sig=" + testSig
 	closed.Close()
 
-	rc := retryablehttp.NewClient()
-	rc.Logger = nil
-	rc.RetryMax = 0
-	rc.ErrorHandler = retryablehttp.PassthroughErrorHandler
-
-	_, err := NewSimpleService(fixedCard{}, rc.StandardClient(), u).Post(context.Background(), webhook.Message{})
+	_, err := NewSimpleService(fixedCard{}, retryClient(0), u, 0).Post(context.Background(), webhook.Message{})
 	if err == nil {
 		t.Fatal("Post() succeeded, want an error")
 	}
@@ -176,7 +201,7 @@ func TestPost_unreachable(t *testing.T) {
 // When the card cannot be built, nothing is sent.
 func TestPost_cardFails(t *testing.T) {
 	u, calls := fakeTeams(t, http.StatusAccepted, "")
-	_, err := NewSimpleService(fixedCard{err: errors.New("bad template")}, http.DefaultClient, u).
+	_, err := NewSimpleService(fixedCard{err: errors.New("bad template")}, http.DefaultClient, u, 0).
 		Post(context.Background(), webhook.Message{})
 
 	if !errors.Is(err, ErrCard) || !strings.Contains(err.Error(), "bad template") {
@@ -184,5 +209,33 @@ func TestPost_cardFails(t *testing.T) {
 	}
 	if *calls != 0 {
 		t.Errorf("Teams called %d times, want 0", *calls)
+	}
+}
+
+// When Teams does not answer, Post gives up after the timeout - not after
+// the retries: the limit covers the delivery as a whole, so a retry client
+// allowed 3 retries still makes only the one attempt that hung.
+func TestPost_timeout(t *testing.T) {
+	const timeout = 200 * time.Millisecond
+	u, calls := silentTeams(t)
+
+	start := time.Now()
+	_, err := NewSimpleService(fixedCard{}, retryClient(3), u, timeout).Post(context.Background(), webhook.Message{})
+	took := time.Since(start)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Post() error = %v, want context.DeadlineExceeded", err)
+	}
+	if !strings.HasPrefix(err.Error(), "teams did not answer within 200ms") {
+		t.Errorf("error %q does not name the timeout", err)
+	}
+	if took < timeout || took > 2*time.Second {
+		t.Errorf("Post() took %s, want just over %s", took, timeout)
+	}
+	if *calls != 1 {
+		t.Errorf("Teams called %d times, want 1", *calls)
+	}
+	if strings.Contains(err.Error(), testSig) || strings.Contains(err.Error(), "/workflows/") {
+		t.Errorf("error leaks the URL: %v", err)
 	}
 }

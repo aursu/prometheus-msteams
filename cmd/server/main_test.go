@@ -1,7 +1,10 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -55,6 +58,48 @@ func Test_validateWebhook(t *testing.T) {
 			// Errors go to logs, so they must not leak the signature.
 			if err != nil && strings.Contains(err.Error(), testSig) {
 				t.Errorf("validateWebhook() error leaks the signature: %v", err)
+			}
+		})
+	}
+}
+
+// The client from newTeamsClient makes 1 + retryMax attempts on a 5xx, and
+// in the end returns Teams' answer as it is (not an error), so the service
+// can see the status code.
+func Test_newTeamsClient_retries(t *testing.T) {
+	tests := []struct {
+		name      string
+		retryMax  int
+		wantCalls int32
+	}{
+		{name: "default: no retries, Alertmanager retries", retryMax: 0, wantCalls: 1},
+		{name: "one retry", retryMax: 1, wantCalls: 2}, // waits about 1s between the two
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			// The server runs its handler in another goroutine (Go's
+			// lightweight thread); atomic.Int32 makes the count safe to
+			// read from the test.
+			var calls atomic.Int32
+			teams := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			defer teams.Close()
+
+			c := newTeamsClient(teamsClientOptions{retryMax: tt.retryMax})
+			resp, err := c.Post(teams.URL, "application/json", strings.NewReader("{}"))
+			if err != nil {
+				t.Fatalf("Post() error = %v, want the 503 answer", err)
+			}
+			_ = resp.Body.Close()
+
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Errorf("status = %d, want 503", resp.StatusCode)
+			}
+			if got := calls.Load(); got != tt.wantCalls {
+				t.Errorf("Teams called %d times, want %d", got, tt.wantCalls)
 			}
 		})
 	}

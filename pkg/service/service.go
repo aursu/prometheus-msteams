@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/prometheus-msteams/prometheus-msteams/pkg/card"
 	"github.com/prometheus/alertmanager/notify/webhook"
@@ -69,12 +70,17 @@ type simpleService struct {
 	converter  card.Converter
 	client     *http.Client
 	webhookURL string
+	timeout    time.Duration // how long one delivery may take; 0 = no own limit
 }
 
 // NewSimpleService creates a simpleService. Go has no constructors; a
 // New... function plays that role.
-func NewSimpleService(converter card.Converter, client *http.Client, webhookURL string) Service {
-	return simpleService{converter, client, webhookURL}
+//
+// timeout limits one delivery as a whole, retries of the client included.
+// When it runs out the request is cancelled, and Post returns an error for
+// which errors.Is(err, context.DeadlineExceeded) is true.
+func NewSimpleService(converter card.Converter, client *http.Client, webhookURL string, timeout time.Duration) Service {
+	return simpleService{converter, client, webhookURL, timeout}
 }
 
 // Post renders the alert group into an Adaptive Card and sends it to Teams.
@@ -105,6 +111,17 @@ func (s simpleService) post(ctx context.Context, card json.RawMessage) (PostResp
 	ctx, span := trace.StartSpan(ctx, "simpleService.post")
 	defer span.End()
 
+	// The limit rides on the context: WithTimeout derives a context that is
+	// cancelled when the time is up, and both the HTTP client and the retry
+	// client stop as soon as the request's context is cancelled. cancel
+	// stops the timer when the delivery finishes first; Go requires calling
+	// it, hence the defer.
+	if s.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.timeout)
+		defer cancel()
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.webhookURL, bytes.NewReader(card))
 	if err != nil {
 		// The URL was validated at startup; this is not expected.
@@ -114,7 +131,13 @@ func (s simpleService) post(ctx context.Context, card json.RawMessage) (PostResp
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return PostResponse{}, fmt.Errorf("sending to Teams failed: %w", withoutURL(err))
+		err = withoutURL(err)
+		// Our own limit ran out (a cancel by the caller ends in
+		// context.Canceled instead): say so in plain words.
+		if s.timeout > 0 && errors.Is(err, context.DeadlineExceeded) {
+			return PostResponse{}, fmt.Errorf("teams did not answer within %s: %w", s.timeout, err)
+		}
+		return PostResponse{}, fmt.Errorf("sending to Teams failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

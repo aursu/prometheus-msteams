@@ -154,6 +154,49 @@ func hasAnySuffix(s string, suffixes []string) bool {
 	return false
 }
 
+// teamsClientOptions are the settings of the HTTP client that sends the cards
+// to Teams, taken from the command-line flags.
+type teamsClientOptions struct {
+	retryMax            int
+	maxIdleConns        int
+	idleConnTimeout     time.Duration
+	tlsHandshakeTimeout time.Duration
+	insecureSkipVerify  bool
+}
+
+// newTeamsClient builds the HTTP client that sends the cards to Teams: a
+// retry client (hashicorp/go-retryablehttp) behind the standard *http.Client
+// interface. It sets no overall timeout; each delivery is limited by
+// -teams-timeout through its context (see service.NewSimpleService).
+func newTeamsClient(o teamsClientOptions) *http.Client {
+	retryClient := retryablehttp.NewClient()
+	// The retry client's own logger prints every request URL, signature
+	// included (it masks only passwords), so it stays off even with -debug.
+	retryClient.Logger = nil
+	// When the retries are used up, hand back the last response or error as
+	// it is. The default instead returns a new error "POST <full URL> giving
+	// up after N attempt(s)": the status code is lost and the URL leaks.
+	retryClient.ErrorHandler = retryablehttp.PassthroughErrorHandler
+	retryClient.RetryMax = o.retryMax
+	retryClient.HTTPClient = &http.Client{
+		Transport: &ochttp.Transport{
+			Base: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				MaxIdleConns:          o.maxIdleConns,
+				IdleConnTimeout:       o.idleConnTimeout,
+				TLSHandshakeTimeout:   o.tlsHandshakeTimeout,
+				ExpectContinueTimeout: 1 * time.Second,
+				TLSClientConfig:       &tls.Config{InsecureSkipVerify: o.insecureSkipVerify}, //nolint: gosec
+			},
+		},
+	}
+	return retryClient.StandardClient()
+}
+
 //nolint:gocyclo
 func main() { //nolint: funlen
 	var (
@@ -173,7 +216,13 @@ func main() { //nolint: funlen
 		httpClientTLSHandshakeTimeout = fs.Duration("tls-handshake-timeout", 30*time.Second, "The HTTP client TLS handshake timeout.")
 		httpClientMaxIdleConn         = fs.Int("max-idle-conns", 100, "The HTTP client maximum number of idle connections")
 		insecureSkipVerify            = fs.Bool("insecure-skip-verify", false, "Disable validation of the server certificate.")
-		retryMax                      = fs.Int("max-retry-count", 3, "The retry maximum for sending requests to the webhook")
+		// 0 by default: a failed delivery is answered at once, and
+		// Alertmanager retries it (it retries 5xx answers, see statusFor in
+		// package transport). Retries here would keep Alertmanager waiting.
+		retryMax = fs.Int("max-retry-count", 0, "How often this service itself retries a failed delivery to Teams. 0 leaves retries to Alertmanager.")
+		// One delivery, retries included, may take this long; then
+		// Alertmanager is answered 504 and retries later.
+		teamsTimeout = fs.Duration("teams-timeout", 30*time.Second, "How long one delivery to Teams may take, retries included. 0 means no limit.")
 		// On by default: a wrong URL stops the program at startup instead of
 		// failing every notification later. See validateWebhook for the rules.
 		validateWebhookURL = fs.Bool("validate-webhook-url", true, "Check that every webhook URL looks like a Teams Workflow URL (https, Workflow host, .../workflows/.../triggers/manual/paths/invoke, api-version, sp, sv and sig present).")
@@ -268,34 +317,13 @@ func main() { //nolint: funlen
 		)
 	}
 
-	// Teams HTTP client setup.
-	retryClient := retryablehttp.NewClient()
-	// The retry client's own logger prints every request URL, signature
-	// included (it masks only passwords), so it stays off even with -debug.
-	retryClient.Logger = nil
-	// When the retries are used up, hand back the last response or error as
-	// it is. The default instead returns a new error "POST <full URL> giving
-	// up after N attempt(s)": the status code is lost and the URL leaks.
-	retryClient.ErrorHandler = retryablehttp.PassthroughErrorHandler
-	retryClient.RetryMax = *retryMax
-	retryClient.HTTPClient = &http.Client{
-		Transport: &ochttp.Transport{
-			Base: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				MaxIdleConns:          *httpClientMaxIdleConn,
-				IdleConnTimeout:       *httpClientIdleConnTimeout,
-				TLSHandshakeTimeout:   *httpClientTLSHandshakeTimeout,
-				ExpectContinueTimeout: 1 * time.Second,
-				TLSClientConfig:       &tls.Config{InsecureSkipVerify: *insecureSkipVerify}, //nolint: gosec
-			},
-		},
-	}
-
-	httpClient := retryClient.StandardClient()
+	httpClient := newTeamsClient(teamsClientOptions{
+		retryMax:            *retryMax,
+		maxIdleConns:        *httpClientMaxIdleConn,
+		idleConnTimeout:     *httpClientIdleConnTimeout,
+		tlsHandshakeTimeout: *httpClientTLSHandshakeTimeout,
+		insecureSkipVerify:  *insecureSkipVerify,
+	})
 
 	var routes []transport.Route
 
@@ -321,7 +349,7 @@ func main() { //nolint: funlen
 
 			var r transport.Route
 			r.RequestPath = uri
-			r.Service = service.NewSimpleService(defaultConverter, httpClient, webhook)
+			r.Service = service.NewSimpleService(defaultConverter, httpClient, webhook, *teamsTimeout)
 			r.Service = service.NewLoggingService(logger, r.Service)
 			routes = append(routes, r)
 		}
@@ -373,7 +401,7 @@ func main() { //nolint: funlen
 
 		var r transport.Route
 		r.RequestPath = c.RequestPath
-		r.Service = service.NewSimpleService(converter, httpClient, c.WebhookURL)
+		r.Service = service.NewSimpleService(converter, httpClient, c.WebhookURL, *teamsTimeout)
 		r.Service = service.NewLoggingService(logger, r.Service)
 		routes = append(routes, r)
 	}

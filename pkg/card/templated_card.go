@@ -15,8 +15,28 @@ import (
 	"k8s.io/helm/pkg/engine"
 )
 
-// workflowCardType is the top-level "type" a Teams Workflow message must have.
-const workflowCardType = "message"
+// What a Teams Workflow accepts: a message whose attachments are Adaptive
+// Cards.
+const (
+	workflowCardType   = "message"
+	adaptiveCardFormat = "application/vnd.microsoft.card.adaptive"
+)
+
+// envelope is the outer part of a Workflow message, the only part this
+// program reads:
+//
+//	{"type": "message", "attachments": [{"contentType": "...", "content": {...card...}}]}
+//
+// The card itself (content) stays json.RawMessage: it is checked to exist,
+// never parsed or rewritten. (The `json:"..."` tags name the JSON key each
+// field is read from.)
+type envelope struct {
+	Type        string `json:"type"`
+	Attachments []struct {
+		ContentType string          `json:"contentType"`
+		Content     json.RawMessage `json:"content"`
+	} `json:"attachments"`
+}
 
 // templatedCard implements Converter using Alert manager templating.
 type templatedCard struct {
@@ -30,29 +50,57 @@ func NewTemplatedCardCreator(template *template.Template, escapeUnderscores bool
 	return &templatedCard{template, escapeUnderscores}
 }
 
-// Convert renders the template "teams.card" with the alert group and
-// parses the result as JSON. A template that produces invalid JSON, or JSON
-// whose top-level type is not "message", is an error here, before anything is
-// sent to Teams.
-func (m *templatedCard) Convert(ctx context.Context, promAlert webhook.Message) (WorkflowConnectorCard, error) {
+// Convert renders the template "teams.card" with the alert group, checks
+// that the result is a message Teams Workflows accept (see checkEnvelope) and
+// returns it compacted. Nothing is added to or removed from what the template
+// wrote. A bad template is an error here, before anything is sent to Teams.
+func (m *templatedCard) Convert(ctx context.Context, promAlert webhook.Message) (json.RawMessage, error) {
 	_, span := trace.StartSpan(ctx, "templatedCard.Convert")
 	defer span.End()
 
 	cardString, err := m.executeTemplate(promAlert)
 	if err != nil {
-		return WorkflowConnectorCard{}, err
+		return nil, err
 	}
 
-	var card WorkflowConnectorCard
-	if err := json.Unmarshal([]byte(cardString), &card); err != nil {
-		return WorkflowConnectorCard{}, err
+	if err := checkEnvelope([]byte(cardString)); err != nil {
+		return nil, err
 	}
 
-	if card.Type != workflowCardType {
-		return WorkflowConnectorCard{}, errors.New("only message type is supported")
+	// json.Compact copies the JSON without the whitespace and line breaks of
+	// the template. Same content, far fewer bytes (Teams limits the size).
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, []byte(cardString)); err != nil {
+		return nil, fmt.Errorf("template output is not valid JSON: %w", err)
 	}
+	return compact.Bytes(), nil
+}
 
-	return card, nil
+// checkEnvelope checks only what a Workflow needs to accept the message at
+// all: valid JSON, type "message", at least one attachment, every attachment
+// an Adaptive Card with content. The card content itself is not validated
+// here; the tests validate our templates against the Adaptive Card schema.
+func checkEnvelope(b []byte) error {
+	var e envelope
+	if err := json.Unmarshal(b, &e); err != nil {
+		return fmt.Errorf("template output is not valid JSON: %w", err)
+	}
+	if e.Type != workflowCardType {
+		return fmt.Errorf("template output has type %q, want %q", e.Type, workflowCardType)
+	}
+	if len(e.Attachments) == 0 {
+		return errors.New("template output has no attachments")
+	}
+	// range gives index and element; i is used in the messages.
+	for i, a := range e.Attachments {
+		if a.ContentType != adaptiveCardFormat {
+			return fmt.Errorf("attachment %d has contentType %q, want %q", i, a.ContentType, adaptiveCardFormat)
+		}
+		if len(a.Content) == 0 || string(a.Content) == "null" {
+			return fmt.Errorf("attachment %d has no content", i)
+		}
+	}
+	return nil
 }
 
 func (m *templatedCard) executeTemplate(promAlert webhook.Message) (string, error) {

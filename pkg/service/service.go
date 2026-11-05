@@ -64,19 +64,14 @@ func (s simpleService) Post(ctx context.Context, wm webhook.Message) ([]PostResp
 	return prs, nil
 }
 
-func (s simpleService) post(ctx context.Context, c interface{}, url string) (PostResponse, error) {
+// post sends the finished card bytes to Teams as they are.
+func (s simpleService) post(ctx context.Context, card json.RawMessage, url string) (PostResponse, error) {
 	ctx, span := trace.StartSpan(ctx, "simpleService.post")
 	defer span.End()
 
 	pr := PostResponse{WebhookURL: url}
 
-	b, err := json.Marshal(c)
-	if err != nil {
-		err = fmt.Errorf("failed to decoding JSON card: %w", err)
-		return pr, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", s.webhookURL, bytes.NewBuffer(b))
+	req, err := http.NewRequestWithContext(ctx, "POST", s.webhookURL, bytes.NewReader(card))
 	if err != nil {
 		err = fmt.Errorf("failed to creating a request: %w", err)
 		return pr, err

@@ -4,27 +4,28 @@ package card
 
 import (
 	"context"
+	"encoding/json"
+	"time"
 
 	"github.com/go-kit/kit/log"
 	"github.com/prometheus/alertmanager/notify/webhook"
 )
 
-// Action is one entry of an Adaptive Card "actions" list, e.g. an
-// Action.OpenUrl button. Action types differ in their fields, so it is kept as
-// a free-form JSON object (a map from field name to any value) instead of a
-// fixed struct.
-type Action map[string]interface{}
-
 // Converter turns one Alertmanager webhook message (one alert group) into one
 // Teams Workflow message carrying an Adaptive Card.
 // (A Go interface lists the methods a type must have; any type that has them
 // satisfies the interface automatically, without an "implements" keyword.)
+//
+// The result is json.RawMessage: the finished JSON bytes, sent to Teams as
+// they are. The card is deliberately not mapped onto Go structs, so that
+// whatever the template writes - any Adaptive Card field, any version -
+// reaches Teams unchanged.
 type Converter interface {
-	Convert(context.Context, webhook.Message) (WorkflowConnectorCard, error)
+	Convert(context.Context, webhook.Message) (json.RawMessage, error)
 }
 
 // loggingMiddleware wraps another Converter and logs every conversion
-// (decorator pattern). Its Convert method is in converterWorkflow.go.
+// (decorator pattern).
 type loggingMiddleware struct {
 	logger log.Logger
 	next   Converter
@@ -33,4 +34,19 @@ type loggingMiddleware struct {
 // NewCreatorLoggingMiddleware creates a loggingMiddleware.
 func NewCreatorLoggingMiddleware(l log.Logger, n Converter) Converter {
 	return loggingMiddleware{l, n}
+}
+
+// Convert calls the wrapped Converter and logs the alert, the resulting card
+// and how long the conversion took. The named results (c, err) let the
+// deferred function read them after the wrapped call has returned.
+func (l loggingMiddleware) Convert(ctx context.Context, a webhook.Message) (c json.RawMessage, err error) {
+	// defer runs this function when Convert returns, whichever way it does.
+	defer func(begin time.Time) {
+		_ = l.logger.Log(
+			"alert", a,
+			"card", string(c),
+			"took", time.Since(begin),
+		)
+	}(time.Now())
+	return l.next.Convert(ctx, a)
 }

@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -15,7 +16,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-retryablehttp"
-	"github.com/pkg/errors"
 
 	ocprometheus "contrib.go.opencensus.io/exporter/prometheus"
 	"github.com/aursu/prometheus-msteams/pkg/card"
@@ -34,8 +34,8 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/oklog/run"
-	"github.com/peterbourgon/ff"
-	"gopkg.in/yaml.v2"
+	"github.com/peterbourgon/ff/v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // PromTeamsConfig is the struct representation of the config file.
@@ -53,6 +53,14 @@ type ConnectorWithCustomTemplate struct {
 	TemplateFile      string `yaml:"template_file"`
 	WebhookURL        string `yaml:"webhook_url"`
 	EscapeUnderscores bool   `yaml:"escape_underscores"`
+}
+
+// parseFlags reads the command line into fs. Every flag can also be set by an
+// environment variable: the flag name in upper case with "-" turned into "_"
+// (-teams-timeout -> TEAMS_TIMEOUT). A flag on the command line wins over
+// the variable.
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	return ff.Parse(fs, args, ff.WithEnvVars())
 }
 
 func parseTeamsConfigFile(f string) (PromTeamsConfig, error) {
@@ -231,7 +239,7 @@ func main() { //nolint: funlen
 		_ = fs.Bool("workflow-webhook", true, "Deprecated, ignored: Workflow webhooks are the only kind.")
 	)
 
-	if err := ff.Parse(fs, os.Args[1:], ff.WithEnvVarNoPrefix()); err != nil {
+	if err := parseFlags(fs, os.Args[1:]); err != nil {
 		fmt.Fprint(os.Stderr, err.Error())
 		os.Exit(1)
 	}

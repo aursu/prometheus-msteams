@@ -1,11 +1,15 @@
 package main
 
 import (
+	"flag"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // Table-driven test (the usual Go style): each row is one case, the loop
@@ -102,5 +106,83 @@ func Test_newTeamsClient_retries(t *testing.T) {
 				t.Errorf("Teams called %d times, want %d", got, tt.wantCalls)
 			}
 		})
+	}
+}
+
+// A flag can come from the environment; the command line wins.
+func Test_parseFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string // value of TEAMS_TIMEOUT; "" = not set
+		args []string
+		want time.Duration
+	}{
+		{name: "default", want: 30 * time.Second},
+		{name: "from the environment", env: "5s", want: 5 * time.Second},
+		{name: "command line wins", env: "5s", args: []string{"-teams-timeout=7s"}, want: 7 * time.Second},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.env != "" {
+				// t.Setenv restores the variable when the test ends.
+				t.Setenv("TEAMS_TIMEOUT", tt.env)
+			}
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			timeout := fs.Duration("teams-timeout", 30*time.Second, "")
+
+			if err := parseFlags(fs, tt.args); err != nil {
+				t.Fatal(err)
+			}
+			if *timeout != tt.want {
+				t.Errorf("teams-timeout = %s, want %s", *timeout, tt.want)
+			}
+		})
+	}
+}
+
+// The configuration file in the format the chart writes.
+func Test_parseTeamsConfigFile(t *testing.T) {
+	const config = `
+connectors:
+  - /alertmanager: https://example.org/one
+connectors_with_custom_templates:
+  - request_path: /custom
+    template_file: /etc/template/card.tmpl
+    webhook_url: https://example.org/two
+    escape_underscores: true
+`
+	f := filepath.Join(t.TempDir(), "connectors.yaml")
+	if err := os.WriteFile(f, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tc, err := parseTeamsConfigFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(tc.Connectors) != 1 || tc.Connectors[0]["/alertmanager"] != "https://example.org/one" {
+		t.Errorf("Connectors = %v", tc.Connectors)
+	}
+	want := ConnectorWithCustomTemplate{
+		RequestPath:       "/custom",
+		TemplateFile:      "/etc/template/card.tmpl",
+		WebhookURL:        "https://example.org/two",
+		EscapeUnderscores: true,
+	}
+	if len(tc.ConnectorsWithCustomTemplates) != 1 || tc.ConnectorsWithCustomTemplates[0] != want {
+		t.Errorf("ConnectorsWithCustomTemplates = %+v, want [%+v]", tc.ConnectorsWithCustomTemplates, want)
+	}
+}
+
+// A broken file stops the program instead of starting with no routes.
+func Test_parseTeamsConfigFile_invalid(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "connectors.yaml")
+	if err := os.WriteFile(f, []byte("connectors: [unclosed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseTeamsConfigFile(f); err == nil {
+		t.Error("parseTeamsConfigFile() succeeded on invalid YAML")
 	}
 }

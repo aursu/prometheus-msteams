@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	jd "github.com/josephburnett/jd/lib"
+	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/alertmanager/notify/webhook"
 )
 
@@ -51,20 +51,22 @@ func CompareToGoldenFile(t *testing.T, v interface{}, file string, update bool) 
 		t.Fatalf("failed reading the golden file: %s", err)
 	}
 	if string(want) != string(gotBytes) {
-		a, err := jd.ReadJsonString(string(gotBytes))
-		if err != nil {
+		// Decode both sides into plain values (maps, slices, strings,
+		// numbers), so that the diff names the fields that differ rather
+		// than the bytes.
+		var g, w any
+		if err := json.Unmarshal(gotBytes, &g); err != nil {
 			t.Fatal(err)
 		}
-		b, err := jd.ReadJsonString(string(want))
-		if err != nil {
-			t.Fatal(err)
+		if err := json.Unmarshal(want, &w); err != nil {
+			t.Fatalf("the golden file %s is not valid JSON: %s", gp, err)
 		}
 
 		result := fmt.Sprintf(
-			"\ngot:\n%s\nwant:\n%s\ndiff:\n%s",
+			"\ngot:\n%s\nwant:\n%s\ndiff (-want +got):\n%s",
 			string(gotBytes),
 			string(want),
-			a.Diff(b).Render(),
+			cmp.Diff(w, g),
 		)
 
 		t.Fatal(result)

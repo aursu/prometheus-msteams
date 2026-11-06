@@ -71,9 +71,13 @@ Run it with one channel:
 ```bash
 ./bin/prometheus-msteams-linux-amd64 \
   -teams-request-uri /alertmanager \
-  -teams-incoming-webhook-url "$TEAMS_WORKFLOW_URL" \
+  -teams-incoming-webhook-url-file ./workflow-url \
   -template-file ./default-message-workflow-card.tmpl
 ```
+
+`./workflow-url` holds the Workflow URL. `-teams-incoming-webhook-url`
+takes the URL itself instead, but then it shows in the process list and
+the shell history.
 
 Every flag can also be set by an environment variable: the flag name in
 upper case with `-` turned into `_` (`-teams-timeout` is `TEAMS_TIMEOUT`).
@@ -133,27 +137,38 @@ configuration file:
 ![](./docs/promteams_multiconfig.png)
 
 ```yaml
-# Paths that use the template given by -template-file.
-connectors:
-- /high_priority_channel: "https://...workflow URL 1..."
-- /low_priority_channel: "https://...workflow URL 2..."
-
-# Paths with a template of their own.
 connectors_with_custom_templates:
+# The URL from a file; the template given by -template-file.
+- request_path: /high_priority_channel
+  webhook_url_file: /etc/teams/high
+# A template of its own.
 - request_path: /with_buttons
+  webhook_url_file: /etc/teams/buttons
   template_file: ./examples/templates/default-message-workflow-card-actions.tmpl
-  webhook_url: "https://...workflow URL 3..."
   escape_underscores: false  # as -auto-escape-underscores; see Card templates
+
+# The URL written into this file, with the template given by
+# -template-file. Keep this for files that are themselves secret.
+connectors:
+- /low_priority_channel: "https://...workflow URL..."
 ```
 
 ```bash
 ./bin/prometheus-msteams-linux-amd64 -config-file ./connectors.yaml
 ```
 
+Per entry of `connectors_with_custom_templates`: `request_path`, the URL
+as `webhook_url_file` (a file holding it) or `webhook_url` (the URL itself),
+and optionally `template_file` and `escape_underscores`.
+
+URL files are read once, at startup: after a URL changes, restart the
+service. Spaces and line breaks around the URL are dropped.
+
 A request path must start with `/` and must not contain `{`, `}` or a
 space. Every URL is checked at startup (`-validate-webhook-url`, on by
 default): https, a Workflow host, `/workflows/.../triggers/manual/paths/invoke`
-and the query parameters `api-version`, `sp`, `sv` and `sig`.
+and the query parameters `api-version`, `sp`, `sv` and `sig`. Errors name
+the request path and the file, never the URL.
 
 In Alertmanager, route to the paths:
 
@@ -265,6 +280,8 @@ plus the Go runtime and process metrics.
     	How often this service itself retries a failed delivery to Teams. 0 leaves retries to Alertmanager.
   -teams-incoming-webhook-url string
     	The default Microsoft Teams webhook connector.
+  -teams-incoming-webhook-url-file string
+    	A file holding the Teams Workflow URL for -teams-request-uri, instead of -teams-incoming-webhook-url.
   -teams-request-uri string
     	The default request URI path where Prometheus will post to.
   -teams-timeout duration
@@ -290,3 +307,54 @@ Logs go to stderr. The full alert and the rendered card are logged with
 A Helm chart is in [chart/prometheus-msteams](./chart/prometheus-msteams).
 It still follows the upstream project (image, MessageCard template) and is
 being reworked.
+
+Without the chart: the Workflow URLs go into a Secret, mounted as files;
+the configuration, which then holds no secret, into a ConfigMap.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: prometheus-msteams-urls
+type: Opaque
+stringData:                  # one key per Workflow; each key becomes a file
+  high: "https://...workflow URL 1..."
+  low: "https://...workflow URL 2..."
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-msteams-config
+data:
+  connectors.yaml: |
+    connectors_with_custom_templates:
+    - request_path: /high_priority_channel
+      webhook_url_file: /etc/teams/high
+    - request_path: /low_priority_channel
+      webhook_url_file: /etc/teams/low
+---
+# In the Deployment's pod template:
+spec:
+  containers:
+  - name: prometheus-msteams
+    args:
+    - -config-file=/etc/config/connectors.yaml
+    volumeMounts:
+    - name: config
+      mountPath: /etc/config
+    - name: urls
+      mountPath: /etc/teams
+      readOnly: true
+  volumes:
+  - name: config
+    configMap:
+      name: prometheus-msteams-config
+  - name: urls
+    secret:
+      secretName: prometheus-msteams-urls
+      defaultMode: 0400
+```
+
+Kubernetes updates the mounted files when the Secret changes, but the
+service reads them only at startup: after changing a URL, restart it
+(`kubectl rollout restart deployment/prometheus-msteams`).

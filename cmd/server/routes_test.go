@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,6 +134,8 @@ func Test_routeBuilder_build_errors(t *testing.T) {
 		t.Fatal(err)
 	}
 	invalidURL := "http://example.org/hook?sig=" + routesTestSig
+	emptyFile := writeFile(t, "empty", " \n")
+	invalidURLFile := writeFile(t, "invalid", invalidURL+"\n")
 
 	tests := []struct {
 		name    string
@@ -144,10 +147,16 @@ func Test_routeBuilder_build_errors(t *testing.T) {
 			{RequestPath: "/c", WebhookURL: invalidURL, TemplateFile: defaultTemplateFile}}}, wantErr: "request path /c:"},
 		{name: "no request_path", tc: PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
 			{WebhookURL: validWorkflowURL, TemplateFile: defaultTemplateFile}}}, wantErr: "no request_path"},
-		{name: "no webhook_url", tc: PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
-			{RequestPath: "/c", TemplateFile: defaultTemplateFile}}}, wantErr: "webhook_url is required"},
-		{name: "no template_file", tc: PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
-			{RequestPath: "/c", WebhookURL: validWorkflowURL}}}, wantErr: "template_file is required"},
+		{name: "no webhook URL", tc: PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
+			{RequestPath: "/c", TemplateFile: defaultTemplateFile}}}, wantErr: "request path /c: webhook_url or webhook_url_file is required"},
+		{name: "webhook_url and webhook_url_file", tc: PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
+			{RequestPath: "/c", WebhookURL: validWorkflowURL, WebhookURLFile: invalidURLFile}}}, wantErr: "not both"},
+		{name: "URL file missing", tc: PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
+			{RequestPath: "/c", WebhookURLFile: "/nonexistent/url"}}}, wantErr: "/nonexistent/url"},
+		{name: "URL file empty", tc: PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
+			{RequestPath: "/c", WebhookURLFile: emptyFile}}}, wantErr: "is empty"},
+		{name: "invalid URL in file", tc: PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
+			{RequestPath: "/c", WebhookURLFile: invalidURLFile}}}, wantErr: "request path /c:"},
 		{name: "template file missing", tc: PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
 			{RequestPath: "/c", WebhookURL: validWorkflowURL, TemplateFile: "/nonexistent.tmpl"}}}, wantErr: "/nonexistent.tmpl"},
 		{name: "template does not parse", tc: PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
@@ -165,6 +174,75 @@ func Test_routeBuilder_build_errors(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), routesTestSig) {
 				t.Errorf("error leaks the signature: %v", err)
+			}
+		})
+	}
+}
+
+// writeFile stores content in a temporary file and returns its path.
+func writeFile(t *testing.T, name, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The URL can come from a file (a mounted Secret): the line break at its
+// end is dropped. Without template_file the default template is used.
+func Test_routeBuilder_build_urlFile(t *testing.T) {
+	teams, got := recordingTeams(t)
+	b := newTestBuilder(t)
+	b.validateURLs = false
+
+	routes, err := b.build(PromTeamsConfig{
+		ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
+			{RequestPath: "/from-file", WebhookURLFile: writeFile(t, "url", teams+"/hook-file\n")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post(t, routes[0])
+	if g, want := got(), []string{"/hook-file"}; !slices.Equal(g, want) {
+		t.Errorf("Teams got requests for %v, want %v", g, want)
+	}
+}
+
+// The flags give one connector: a request path with a URL, inline or from a
+// file.
+func Test_flagConnector(t *testing.T) {
+	urlFile := writeFile(t, "url", validWorkflowURL+"\n")
+	tests := []struct {
+		name                     string
+		requestURI, inline, file string
+		want                     map[string]string
+		wantErr                  string
+	}{
+		{name: "no flags"},
+		{name: "path without URL", requestURI: "/a"},
+		{name: "URL without path", inline: validWorkflowURL},
+		{name: "inline URL", requestURI: "/a", inline: validWorkflowURL, want: map[string]string{"/a": validWorkflowURL}},
+		{name: "URL from file", requestURI: "/a", file: urlFile, want: map[string]string{"/a": validWorkflowURL}},
+		{name: "both", requestURI: "/a", inline: validWorkflowURL, file: urlFile, wantErr: "not both"},
+		{name: "file missing", requestURI: "/a", file: "/nonexistent/url", wantErr: "/nonexistent/url"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := flagConnector(tt.requestURI, tt.inline, tt.file)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("flagConnector() error = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			// maps.Equal compares two maps key by key; two nil maps are equal.
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("flagConnector() = %v, want %v", got, tt.want)
 			}
 		})
 	}

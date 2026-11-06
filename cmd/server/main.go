@@ -39,11 +39,15 @@ type PromTeamsConfig struct {
 	ConnectorsWithCustomTemplates []ConnectorWithCustomTemplate `yaml:"connectors_with_custom_templates"`
 }
 
-// ConnectorWithCustomTemplate .
+// ConnectorWithCustomTemplate is one request path with its Teams Workflow:
+// the URL inline (webhook_url) or in a file (webhook_url_file, e.g. a
+// mounted Secret), and optionally its own template (template_file; the
+// default template otherwise).
 type ConnectorWithCustomTemplate struct {
 	RequestPath       string `yaml:"request_path"`
 	TemplateFile      string `yaml:"template_file"`
 	WebhookURL        string `yaml:"webhook_url"`
+	WebhookURLFile    string `yaml:"webhook_url_file"`
 	EscapeUnderscores bool   `yaml:"escape_underscores"`
 }
 
@@ -224,7 +228,11 @@ func main() { //nolint: funlen
 		httpAddr        = fs.String("http-addr", ":2000", "HTTP listen address.")
 		requestURI      = fs.String("teams-request-uri", "", "The default request URI path where Prometheus will post to.")
 		teamsWebhookURL = fs.String("teams-incoming-webhook-url", "", "The default Microsoft Teams webhook connector.")
-		templateFile    = fs.String("template-file", "./default-message-workflow-card.tmpl", "The Adaptive Card template file.")
+		// The same URL from a file, e.g. a mounted Kubernetes Secret, so
+		// that it need not be on the command line or in an environment
+		// variable.
+		teamsWebhookURLFile = fs.String("teams-incoming-webhook-url-file", "", "A file holding the Teams Workflow URL for -teams-request-uri, instead of -teams-incoming-webhook-url.")
+		templateFile        = fs.String("template-file", "./default-message-workflow-card.tmpl", "The Adaptive Card template file.")
 		// Off by default: it rewrites every label and annotation value
 		// before rendering, which also breaks links built from them. The
 		// templates escape each value where they use it (mdEscape, toJson).
@@ -292,14 +300,13 @@ func main() { //nolint: funlen
 		fatal("cannot read the template", "template_file", *templateFile, "err", err)
 	}
 
-	// Connectors from flags.
-	if len(*requestURI) > 0 && len(*teamsWebhookURL) > 0 {
-		tc.Connectors = append(
-			tc.Connectors,
-			map[string]string{
-				*requestURI: *teamsWebhookURL,
-			},
-		)
+	// Connector from flags.
+	fc, err := flagConnector(*requestURI, *teamsWebhookURL, *teamsWebhookURLFile)
+	if err != nil {
+		fatal("invalid configuration", "err", err)
+	}
+	if fc != nil {
+		tc.Connectors = append(tc.Connectors, fc)
 	}
 
 	// Every Teams URL comes from the configuration; there is no route that

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/prometheus/alertmanager/template"
@@ -62,25 +64,78 @@ func (b routeBuilder) build(tc PromTeamsConfig) ([]transport.Route, error) {
 }
 
 // customRoute builds the route of one "connectors_with_custom_templates"
-// entry.
+// entry. The URL is given inline (webhook_url) or in a file
+// (webhook_url_file); without template_file the default template is used.
 func (b routeBuilder) customRoute(c ConnectorWithCustomTemplate) (transport.Route, error) {
 	if c.RequestPath == "" {
 		return transport.Route{}, errors.New("one of the connectors_with_custom_templates has no request_path")
 	}
-	if c.WebhookURL == "" {
-		return transport.Route{}, fmt.Errorf("request path %s: webhook_url is required", c.RequestPath)
-	}
-	if err := b.checkURL(c.RequestPath, c.WebhookURL); err != nil {
-		return transport.Route{}, err
-	}
-	if c.TemplateFile == "" {
-		return transport.Route{}, fmt.Errorf("request path %s: template_file is required", c.RequestPath)
-	}
-	tmpl, err := card.ParseTemplateFile(c.TemplateFile)
+	webhookURL, err := webhookURLFrom(c.WebhookURL, c.WebhookURLFile)
 	if err != nil {
 		return transport.Route{}, fmt.Errorf("request path %s: %w", c.RequestPath, err)
 	}
-	return b.route(c.RequestPath, c.WebhookURL, b.converter(tmpl, c.TemplateFile, c.EscapeUnderscores)), nil
+	if err := b.checkURL(c.RequestPath, webhookURL); err != nil {
+		return transport.Route{}, err
+	}
+
+	tmpl, file := b.defaultTemplate, b.defaultTemplateFile
+	if c.TemplateFile != "" {
+		tmpl, err = card.ParseTemplateFile(c.TemplateFile)
+		if err != nil {
+			return transport.Route{}, fmt.Errorf("request path %s: %w", c.RequestPath, err)
+		}
+		file = c.TemplateFile
+	}
+	return b.route(c.RequestPath, webhookURL, b.converter(tmpl, file, c.EscapeUnderscores)), nil
+}
+
+// webhookURLFrom returns the URL given inline or, if file is set, read from
+// that file. Exactly one of the two must be set.
+func webhookURLFrom(inline, file string) (string, error) {
+	switch {
+	case inline != "" && file != "":
+		return "", errors.New("set webhook_url or webhook_url_file, not both")
+	case file != "":
+		return readURLFile(file)
+	case inline != "":
+		return inline, nil
+	default:
+		return "", errors.New("webhook_url or webhook_url_file is required")
+	}
+}
+
+// readURLFile reads a webhook URL from a file, such as a key of a
+// Kubernetes Secret mounted into the pod. Spaces and line breaks around the
+// URL are dropped: "echo URL > file" and many Secrets end with a line break.
+// The file is read once, at startup; a new URL needs a restart.
+//
+// Errors name the file, never its content.
+func readURLFile(path string) (string, error) {
+	b, err := os.ReadFile(path) //nolint:gosec // the path comes from the configuration
+	if err != nil {
+		// The error from os.ReadFile names the path and the reason
+		// ("no such file or directory", "permission denied").
+		return "", fmt.Errorf("cannot read the webhook URL file: %w", err)
+	}
+	u := strings.TrimSpace(string(b))
+	if u == "" {
+		return "", fmt.Errorf("the webhook URL file %s is empty", path)
+	}
+	return u, nil
+}
+
+// flagConnector returns the connector given by the flags: -teams-request-uri
+// with -teams-incoming-webhook-url or -teams-incoming-webhook-url-file. nil
+// when the flags give none.
+func flagConnector(requestURI, inline, file string) (map[string]string, error) {
+	if requestURI == "" || (inline == "" && file == "") {
+		return nil, nil
+	}
+	webhookURL, err := webhookURLFrom(inline, file)
+	if err != nil {
+		return nil, fmt.Errorf("-teams-incoming-webhook-url / -teams-incoming-webhook-url-file: %w", err)
+	}
+	return map[string]string{requestURI: webhookURL}, nil
 }
 
 // checkURL applies -validate-webhook-url to one URL.

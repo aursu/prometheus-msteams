@@ -26,7 +26,6 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/aursu/prometheus-msteams/pkg/card"
-	"github.com/aursu/prometheus-msteams/pkg/service"
 	"github.com/aursu/prometheus-msteams/pkg/transport"
 	"github.com/aursu/prometheus-msteams/pkg/version"
 )
@@ -288,32 +287,10 @@ func main() { //nolint: funlen
 		}
 	}
 
-	// Templated card defaultConverter setup.
-	var defaultConverter card.Converter
-	{
-		tmpl, err := card.ParseTemplateFile(*templateFile)
-		if err != nil {
-			fatal("cannot read the template", "template_file", *templateFile, "err", err)
-		}
-		defaultConverter = card.NewTemplatedCardCreator(tmpl, *escapeUnderscores)
-		defaultConverter = card.NewCreatorLoggingMiddleware(
-			logger.With(
-				"template_file", *templateFile,
-				"escaped_underscores", *escapeUnderscores,
-			),
-			defaultConverter,
-		)
+	defaultTemplate, err := card.ParseTemplateFile(*templateFile)
+	if err != nil {
+		fatal("cannot read the template", "template_file", *templateFile, "err", err)
 	}
-
-	httpClient := newTeamsClient(teamsClientOptions{
-		retryMax:            *retryMax,
-		maxIdleConns:        *httpClientMaxIdleConn,
-		idleConnTimeout:     *httpClientIdleConnTimeout,
-		tlsHandshakeTimeout: *httpClientTLSHandshakeTimeout,
-		insecureSkipVerify:  *insecureSkipVerify,
-	})
-
-	var routes []transport.Route
 
 	// Connectors from flags.
 	if len(*requestURI) > 0 && len(*teamsWebhookURL) > 0 {
@@ -325,62 +302,24 @@ func main() { //nolint: funlen
 		)
 	}
 
-	// Connectors from config file. Every Teams URL comes from the
-	// configuration; there is no route that takes the URL from the request.
-	for _, c := range tc.Connectors {
-		for uri, webhook := range c {
-			err := validateWebhook(webhook)
-			if *validateWebhookURL && err != nil {
-				fatal("invalid webhook URL", "request_path", uri, "err", err)
-			}
-
-			var r transport.Route
-			r.RequestPath = uri
-			r.Service = service.NewSimpleService(defaultConverter, httpClient, webhook, *teamsTimeout)
-			r.Service = service.NewLoggingService(logger, r.Service)
-			routes = append(routes, r)
-		}
-	}
-
-	// Connectors with custom template files.
-	for _, c := range tc.ConnectorsWithCustomTemplates {
-		if len(c.RequestPath) == 0 {
-			fatal("one of the connectors_with_custom_templates has no request_path")
-		}
-		if len(c.WebhookURL) == 0 {
-			fatal("webhook_url is required", "request_path", c.RequestPath)
-		}
-		err := validateWebhook(c.WebhookURL)
-		if *validateWebhookURL && err != nil {
-			fatal("invalid webhook URL", "request_path", c.RequestPath, "err", err)
-		}
-		if len(c.TemplateFile) == 0 {
-			fatal("template_file is required", "request_path", c.RequestPath)
-		}
-
-		var converter card.Converter
-		tmpl, err := card.ParseTemplateFile(c.TemplateFile)
-		if err != nil {
-			fatal("cannot read the template", "template_file", c.TemplateFile, "err", err)
-		}
-
-		converter = card.NewTemplatedCardCreator(tmpl, c.EscapeUnderscores)
-		converter = card.NewCreatorLoggingMiddleware(
-			logger.With(
-				"template_file", c.TemplateFile,
-				"escaped_underscores", c.EscapeUnderscores,
-			),
-			converter,
-		)
-
-		var r transport.Route
-		r.RequestPath = c.RequestPath
-		r.Service = service.NewSimpleService(converter, httpClient, c.WebhookURL, *teamsTimeout)
-		r.Service = service.NewLoggingService(logger, r.Service)
-		routes = append(routes, r)
-	}
-
-	if err := checkDuplicateRequestPath(routes); err != nil {
+	// Every Teams URL comes from the configuration; there is no route that
+	// takes the URL from the request.
+	routes, err := routeBuilder{
+		logger: logger,
+		client: newTeamsClient(teamsClientOptions{
+			retryMax:            *retryMax,
+			maxIdleConns:        *httpClientMaxIdleConn,
+			idleConnTimeout:     *httpClientIdleConnTimeout,
+			tlsHandshakeTimeout: *httpClientTLSHandshakeTimeout,
+			insecureSkipVerify:  *insecureSkipVerify,
+		}),
+		teamsTimeout:        *teamsTimeout,
+		validateURLs:        *validateWebhookURL,
+		defaultTemplate:     defaultTemplate,
+		defaultTemplateFile: *templateFile,
+		escapeUnderscores:   *escapeUnderscores,
+	}.build(tc)
+	if err != nil {
 		fatal("invalid configuration", "err", err)
 	}
 
@@ -446,15 +385,4 @@ func newLogger(w io.Writer, format string, debug bool) (*slog.Logger, error) {
 	default:
 		return nil, fmt.Errorf("-log-format %q is not valid, want json or fmt", format)
 	}
-}
-
-func checkDuplicateRequestPath(routes []transport.Route) error {
-	added := map[string]bool{}
-	for _, r := range routes {
-		if _, ok := added[r.RequestPath]; ok {
-			return fmt.Errorf("found duplicate use of request path '%s'", r.RequestPath)
-		}
-		added[r.RequestPath] = true
-	}
-	return nil
 }

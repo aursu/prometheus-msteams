@@ -248,6 +248,36 @@ func Test_flagConnector(t *testing.T) {
 	}
 }
 
+// -max-card-size reaches every route: a card above it is not sent.
+func Test_routeBuilder_build_maxCardSize(t *testing.T) {
+	teams, got := recordingTeams(t)
+	b := newTestBuilder(t)
+	b.validateURLs = false
+	b.maxCardSize = 100
+
+	routes, err := b.build(PromTeamsConfig{
+		Connectors: []map[string]string{{"/a": teams + "/hook-a"}},
+		ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
+			{RequestPath: "/custom", WebhookURL: teams + "/hook-custom"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := testutils.ParseWebhookJSONFromFile("../../pkg/card/testdata/prom_post_request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range routes {
+		if _, err := r.Service.Post(context.Background(), msg); err == nil || !strings.Contains(err.Error(), "limit of 100") {
+			t.Errorf("route %s: Post() error = %v, want the size limit", r.RequestPath, err)
+		}
+	}
+	if g := got(); len(g) != 0 {
+		t.Errorf("Teams got requests for %v, want none", g)
+	}
+}
+
 // With -validate-webhook-url=false any URL is taken.
 func Test_routeBuilder_build_noValidation(t *testing.T) {
 	b := newTestBuilder(t)

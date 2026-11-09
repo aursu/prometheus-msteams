@@ -114,18 +114,13 @@ func (m *templatedCard) executeTemplate(promAlert webhook.Message) (string, erro
 		promAlert = jsonEscapeMessage(promAlert)
 	}
 
-	data := &template.Data{
-		Receiver:          promAlert.Receiver,
-		Status:            promAlert.Status,
-		Alerts:            promAlert.Alerts,
-		GroupLabels:       promAlert.GroupLabels,
-		CommonLabels:      promAlert.CommonLabels,
-		CommonAnnotations: promAlert.CommonAnnotations,
-		ExternalURL:       promAlert.ExternalURL,
-	}
-
+	// The template gets the message itself: the alert group (.Status,
+	// .Alerts, .CommonLabels, ... of Alertmanager's template.Data, which the
+	// message embeds; Go makes the fields of an embedded struct fields of the
+	// outer one) plus .TruncatedAlerts, the number of alerts of the group
+	// that are not in .Alerts (see sizeLimiter).
 	cardString, err := m.template.ExecuteTextString(
-		`{{ template "teams.card" . }}`, data,
+		`{{ template "teams.card" . }}`, promAlert,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to template alerts: %w", err)
@@ -144,24 +139,35 @@ func jsonEncode(str string) string {
 	return string(buf.Bytes()[1 : len(buf.Bytes())-2])
 }
 
-// json escape all string values in kvData and also escape
-// '_' char so it does not get processed as markdown italic
-func jsonEncodeAlertmanagerKV(kvData template.KV) {
+// jsonEncodeAlertmanagerKV returns a copy of kvData with every value JSON
+// escaped and '_' escaped, so that it is not read as markdown italics.
+func jsonEncodeAlertmanagerKV(kvData template.KV) template.KV {
+	escaped := make(template.KV, len(kvData))
 	for k, v := range kvData {
-		kvData[k] = strings.ReplaceAll(jsonEncode(v), `_`, `\\_`)
+		escaped[k] = strings.ReplaceAll(jsonEncode(v), `_`, `\\_`)
 	}
+	return escaped
 }
 
+// jsonEscapeMessage returns a copy of promAlert with every label and
+// annotation value escaped (-auto-escape-underscores). The message itself
+// is not changed: Go maps and slices are references, so the copy gets new
+// maps and a new alert list. Before, the values were escaped in place, and
+// a message rendered twice (as sizeLimiter does) was escaped twice.
 func jsonEscapeMessage(promAlert webhook.Message) webhook.Message {
-	retPromAlert := promAlert
-	jsonEncodeAlertmanagerKV(retPromAlert.GroupLabels)
-	jsonEncodeAlertmanagerKV(retPromAlert.CommonLabels)
-	jsonEncodeAlertmanagerKV(retPromAlert.CommonAnnotations)
-	for _, alert := range retPromAlert.Alerts {
-		jsonEncodeAlertmanagerKV(alert.Labels)
-		jsonEncodeAlertmanagerKV(alert.Annotations)
+	d := *promAlert.Data
+	d.GroupLabels = jsonEncodeAlertmanagerKV(d.GroupLabels)
+	d.CommonLabels = jsonEncodeAlertmanagerKV(d.CommonLabels)
+	d.CommonAnnotations = jsonEncodeAlertmanagerKV(d.CommonAnnotations)
+	d.Alerts = make(template.Alerts, len(promAlert.Alerts))
+	// range gives a copy of each alert (a struct); its maps are replaced.
+	for i, a := range promAlert.Alerts {
+		a.Labels = jsonEncodeAlertmanagerKV(a.Labels)
+		a.Annotations = jsonEncodeAlertmanagerKV(a.Annotations)
+		d.Alerts[i] = a
 	}
-	return retPromAlert
+	promAlert.Data = &d
+	return promAlert
 }
 
 // ParseTemplateFile creates an Alertmanager template from the given file. The

@@ -249,6 +249,9 @@ func main() { //nolint: funlen
 		// One delivery, retries included, may take this long; then
 		// Alertmanager is answered 504 and retries later.
 		teamsTimeout = fs.Duration("teams-timeout", 30*time.Second, "How long one delivery to Teams may take, retries included. 0 means no limit.")
+		// Teams refuses messages above about 28 KB; a larger card is built
+		// again with fewer alerts (see card.NewSizeLimiter).
+		maxCardSize = fs.Int("max-card-size", card.DefaultMaxSize, "The largest card sent to Teams, in bytes. A larger card shows only as many alerts as fit and says how many are left out. 0 means no limit.")
 		// On by default: a wrong URL stops the program at startup instead of
 		// failing every notification later. See validateWebhook for the rules.
 		validateWebhookURL = fs.Bool("validate-webhook-url", true, "Check that every webhook URL looks like a Teams Workflow URL (https, Workflow host, .../workflows/.../triggers/manual/paths/invoke, api-version, sp, sv and sig present).")
@@ -322,6 +325,7 @@ func main() { //nolint: funlen
 		}),
 		teamsTimeout:        *teamsTimeout,
 		validateURLs:        *validateWebhookURL,
+		maxCardSize:         *maxCardSize,
 		defaultTemplate:     defaultTemplate,
 		defaultTemplateFile: *templateFile,
 		escapeUnderscores:   *escapeUnderscores,

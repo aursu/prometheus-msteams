@@ -85,6 +85,13 @@ func alertStates(t *testing.T) map[string]func() webhook.Message {
 		"firing warning":  load("firing", "warning"),
 		"firing info":     load("firing", "info"),
 		"resolved":        load("resolved", "critical"),
+		// Alerts left out of the card: the templates add a "more alerts"
+		// line.
+		"firing truncated": func() webhook.Message {
+			a := load("firing", "critical")()
+			a.TruncatedAlerts = 7
+			return a
+		},
 	}
 }
 

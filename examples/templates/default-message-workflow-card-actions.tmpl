@@ -97,6 +97,17 @@
               ]
             }
           {{- end }}
+          {{- /* Alerts of the group not in the card: left out to keep the
+                 card within Teams' size limit, or cut by Alertmanager's
+                 webhook max_alerts. */}}
+          {{- if .TruncatedAlerts }},
+            {
+              "type": "TextBlock",
+              "text": {{ printf "%d more alerts not shown. [Open the group in Alertmanager](%s/#/alerts?silenced=true&inhibited=true&active=true&filter=%s)" .TruncatedAlerts .ExternalURL (labelMatchers .CommonLabels | urlquery) | toJson }},
+              "wrap": true,
+              "isSubtle": true
+            }
+          {{- end }}
         ]
         {{ if $should_have_potential_actions }}
         ,

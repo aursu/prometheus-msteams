@@ -24,6 +24,7 @@ type routeBuilder struct {
 	client       *http.Client
 	teamsTimeout time.Duration
 	validateURLs bool // -validate-webhook-url
+	maxCardSize  int  // -max-card-size
 
 	// The template given by -template-file, used by "connectors".
 	defaultTemplate     *template.Template
@@ -149,11 +150,15 @@ func (b routeBuilder) checkURL(path, webhookURL string) error {
 	return nil
 }
 
-// converter renders cards with tmpl and logs them at debug level.
+// converter renders cards with tmpl, keeps them within -max-card-size and
+// logs them at debug level. Each layer wraps the next one.
 func (b routeBuilder) converter(tmpl *template.Template, file string, escapeUnderscores bool) card.Converter {
-	return card.NewCreatorLoggingMiddleware(
-		b.logger.With("template_file", file, "escaped_underscores", escapeUnderscores),
-		card.NewTemplatedCardCreator(tmpl, escapeUnderscores),
+	logger := b.logger.With("template_file", file, "escaped_underscores", escapeUnderscores)
+	return card.NewCreatorLoggingMiddleware(logger,
+		card.NewSizeLimiter(logger,
+			card.NewTemplatedCardCreator(tmpl, escapeUnderscores),
+			b.maxCardSize,
+		),
 	)
 }
 

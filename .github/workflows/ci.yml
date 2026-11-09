@@ -1,0 +1,85 @@
+# Tests every push and pull request; on master and on version tags it also
+# publishes the container image to the GitHub Container Registry:
+#   ghcr.io/<owner>/prometheus-msteams:master, :sha-<commit>  (push to master)
+#   ghcr.io/<owner>/prometheus-msteams:<tag>, :latest         (tag v*)
+# A pull request builds the image without publishing it.
+# Only GitHub's own actions are used; the rest is plain go and docker.
+name: ci
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt-formatted:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race -coverprofile=coverage.txt ./...
+
+      - name: coverage
+        run: go tool cover -func=coverage.txt | tail -1 >> "$GITHUB_STEP_SUMMARY"
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # push to ghcr.io with the workflow's own token
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # all tags, for git describe
+
+      - name: build
+        run: |
+          # The registry needs a lower-case name.
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          docker build \
+            --build-arg VERSION="$(git describe --tags --always)" \
+            --build-arg COMMIT="$(git rev-parse --short HEAD)" \
+            --build-arg BRANCH="$GITHUB_REF_NAME" \
+            --build-arg BUILD_DATE="$(date -u +%FT%TZ)" \
+            --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            -t "$image:build" .
+
+      - name: smoke test
+        run: docker run --rm "$IMAGE:build" -version
+
+      - name: push
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tags="$GITHUB_REF_NAME latest"
+          else
+            tags="master sha-${GITHUB_SHA::7}"
+          fi
+          for tag in $tags; do
+            docker tag "$IMAGE:build" "$IMAGE:$tag"
+            docker push "$IMAGE:$tag"
+          done

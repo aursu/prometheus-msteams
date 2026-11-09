@@ -1,7 +1,6 @@
 # Dependabot, built into GitHub, opens pull requests that update the
 # dependencies listed here. Minor and patch updates of Go modules come as one
 # grouped pull request a week; each major update comes on its own.
-# GitHub Actions are added here together with the CI workflows.
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -16,9 +15,18 @@ updates:
     commit-message:
       prefix: build
 
+  # The base image in the Dockerfile.
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
     commit-message:
       prefix: build
+
+  # The actions used in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

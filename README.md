@@ -83,8 +83,22 @@ Every flag can also be set by an environment variable: the flag name in
 upper case with `-` turned into `_` (`-teams-timeout` is `TEAMS_TIMEOUT`).
 A flag on the command line wins.
 
-A container image: `make linux docker` builds `prometheus-msteams:<version>`
-from the binary and the default template.
+### Container image
+
+```
+ghcr.io/aursu/prometheus-msteams:master        # the latest commit on master
+ghcr.io/aursu/prometheus-msteams:sha-<commit>  # one commit
+ghcr.io/aursu/prometheus-msteams:<tag>         # a release, also :latest
+```
+
+The image holds only the program (`/promteams`), the default template
+(`/default-message-workflow-card.tmpl`) and the CA certificates, and runs
+as user and group 65532, not root. `make docker` builds it locally; the
+Dockerfile compiles the program itself.
+
+GitHub Actions ([.github/workflows/ci.yml](./.github/workflows/ci.yml))
+test every push and pull request and publish the image from master and
+from `v*` tags.
 
 ### Try it without Alertmanager
 
@@ -349,8 +363,11 @@ data:
 ---
 # In the Deployment's pod template:
 spec:
+  securityContext:
+    fsGroup: 65532           # the image's group; the Secret files get it
   containers:
   - name: prometheus-msteams
+    image: ghcr.io/aursu/prometheus-msteams:master
     args:
     - -config-file=/etc/config/connectors.yaml
     volumeMounts:
@@ -366,8 +383,12 @@ spec:
   - name: urls
     secret:
       secretName: prometheus-msteams-urls
-      defaultMode: 0400
+      defaultMode: 0440      # owner root, group fsGroup: readable by the service only
 ```
+
+The service does not run as root, so the Secret files must be readable
+by its group: `fsGroup` with mode `0440`. With `0400` the files belong to
+root alone and the service stops at startup with "permission denied".
 
 Kubernetes updates the mounted files when the Secret changes, but the
 service reads them only at startup: after changing a URL, restart it

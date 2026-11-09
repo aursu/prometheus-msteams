@@ -1,8 +1,9 @@
 # Tests every push and pull request, and builds the image. Only a version
-# tag publishes the image to the GitHub Container Registry, under that
-# version and nothing else:
+# tag publishes the image and the Helm chart to the GitHub Container
+# Registry, under that version and nothing else:
 #   git tag v1.2.0 && git push origin v1.2.0
-#   -> ghcr.io/<owner>/prometheus-msteams:v1.2.0
+#   -> ghcr.io/<owner>/prometheus-msteams:v1.2.0         (image)
+#   -> oci://ghcr.io/<owner>/charts/prometheus-msteams 1.2.0  (chart, appVersion v1.2.0)
 # There is no moving tag (no :latest, no :master): a deployment names the
 # exact version it runs.
 # Only GitHub's own actions are used; the rest is plain go and docker.
@@ -43,6 +44,10 @@ jobs:
       - name: coverage
         run: go tool cover -func=coverage.txt | tail -1 >> "$GITHUB_STEP_SUMMARY"
 
+      # helm is installed on GitHub's Ubuntu runners.
+      - name: chart
+        run: sh chart/test.sh
+
   image:
     needs: test
     runs-on: ubuntu-latest
@@ -79,3 +84,16 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker tag "$IMAGE:build" "$IMAGE:$GITHUB_REF_NAME"
           docker push "$IMAGE:$GITHUB_REF_NAME"
+
+      # The chart gets the same version, without the "v" (Helm wants plain
+      # semver), and the image tag as appVersion, so by default it deploys
+      # the image of the same release.
+      - name: push chart
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          helm package chart/prometheus-msteams \
+            --version "${GITHUB_REF_NAME#v}" --app-version "$GITHUB_REF_NAME" -d dist
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          helm push dist/prometheus-msteams-*.tgz "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"

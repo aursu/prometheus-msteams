@@ -59,7 +59,7 @@ Treat the URL as a password: anyone who has it can post to the channel.
 
 ## Build and run
 
-Go 1.26 or later.
+Go 1.27 or later.
 
 ```bash
 make linux          # bin/prometheus-msteams-linux-amd64

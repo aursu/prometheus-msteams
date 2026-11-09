@@ -244,7 +244,9 @@
 
 {{- /* A section is a bordered container: a heading line and a hidden body.
        Selecting the heading (Action.ToggleVisibility) shows or hides the
-       body and swaps the arrow: two arrows, one of them hidden. */ -}}
+       body and swaps the arrow: two arrows, one of them hidden. The hint on
+       the right is left out on a narrow card (a phone held upright), so the
+       title keeps its room. */ -}}
 {{- range $sections -}}
   {{- $bodyId := printf "%s-body" .id -}}
   {{- $closedId := printf "%s-closed" .id -}}
@@ -260,7 +262,7 @@
                       (dict "type" "Icon" "name" .icon "size" "xSmall" "fallback" "drop")))
                   (dict "type" "Column" "width" "stretch" "verticalContentAlignment" "Center" "items" (list
                       (dict "type" "TextBlock" "text" .title "weight" "Bolder")))
-                  (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "items" (list
+                  (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "targetWidth" "atLeast:Standard" "items" (list
                       (dict "type" "TextBlock" "text" .hint "size" "Small" "isSubtle" true)))))
         (dict "type" "Container" "id" $bodyId "isVisible" false "items" .items))) -}}
 {{- end -}}

@@ -21,7 +21,8 @@ handles these before validating:
 - the Teams-only elements `Badge`, `Icon`, `CodeBlock`: checked against the
   Teams documentation, and each must have a `fallback`, which takes its place
   for the schema check (`teams_elements_test.go`);
-- the Teams-only properties `showBorder`, `roundedCorners`, `maxHeight`:
+- the Teams-only properties `showBorder`, `roundedCorners`, `maxHeight`,
+  `targetWidth`:
   checked, then removed (`teams_elements_test.go`).
 
 Microsoft publishes no JSON schema with the Teams-only parts.

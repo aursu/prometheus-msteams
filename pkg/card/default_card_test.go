@@ -244,6 +244,12 @@ func Test_defaultCard_firingAlert(t *testing.T) {
 	if !slices.Contains(texts, "access · check · mitigate") {
 		t.Errorf("no hint naming the three steps in %q", texts)
 	}
+	// The hints sit in columns that a narrow card (a phone) leaves out.
+	for _, col := range findElements(card, "Column") {
+		if slices.Contains(textsOf(col), "access · check · mitigate") && col["targetWidth"] != "atLeast:Standard" {
+			t.Errorf("hint column targetWidth = %v, want atLeast:Standard", col["targetWidth"])
+		}
+	}
 	if findByID(card, "details-body") == nil {
 		t.Error("no \"All labels and annotations\" section")
 	}

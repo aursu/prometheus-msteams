@@ -18,8 +18,8 @@ import (
 //     any other client without it shows instead. The fallback takes the
 //     element's place for the schema check, or the element is removed when
 //     the fallback is "drop".
-//   - a Teams-only property (showBorder, roundedCorners, maxHeight) is
-//     checked - right element type, right kind of value - and removed.
+//   - a Teams-only property (showBorder, roundedCorners, maxHeight,
+//     targetWidth) is checked - right element type, right kind of value - and removed.
 //
 // Microsoft publishes no JSON schema with these, so the rules below are
 // written from the documentation; they catch typos and missing fallbacks,
@@ -33,7 +33,7 @@ var teamsElements = map[string]func(el map[string]any) error{
 }
 
 // teamsProperty is a Teams-only property: the element types that may carry
-// it and a check of its value.
+// it (nil: any element) and a check of its value.
 type teamsProperty struct {
 	on    []string
 	check func(v any) error
@@ -43,6 +43,7 @@ var teamsProperties = map[string]teamsProperty{
 	"showBorder":     {on: []string{"Container", "ColumnSet", "Column"}, check: isBool},
 	"roundedCorners": {on: []string{"Container", "ColumnSet", "Column", "Table"}, check: isBool},
 	"maxHeight":      {on: []string{"Container", "Column", "TableCell"}, check: isPixels},
+	"targetWidth":    {on: nil, check: isTargetWidth},
 }
 
 // replaceTeamsElements returns v with every Teams-only element replaced by
@@ -74,7 +75,7 @@ func replaceTeamsElements(v any, at string) (out any, keep bool, err error) {
 		res := make(map[string]any, len(node))
 		for k, val := range node {
 			if p, ok := teamsProperties[k]; ok {
-				if !slices.Contains(p.on, typ) {
+				if p.on != nil && !slices.Contains(p.on, typ) {
 					return nil, false, fmt.Errorf("at '%s': %s is not a property of %s", at, k, typ)
 				}
 				if err := p.check(val); err != nil {
@@ -183,6 +184,27 @@ func isPixels(v any) error {
 	return nil
 }
 
+// targetWidths are the card widths an element can be limited to: a width,
+// or "atLeast:"/"atMost:" and a width. Teams documents them capitalised and
+// writes them in lower case in its examples, so the case is not checked.
+var targetWidths = []string{"VeryNarrow", "Narrow", "Standard", "Wide"}
+
+func isTargetWidth(v any) error {
+	s, _ := v.(string)
+	// CutPrefix returns the rest of s and whether the prefix was there.
+	if rest, ok := strings.CutPrefix(s, "atLeast:"); ok {
+		s = rest
+	} else if rest, ok := strings.CutPrefix(s, "atMost:"); ok {
+		s = rest
+	}
+	for _, w := range targetWidths {
+		if strings.EqualFold(s, w) {
+			return nil
+		}
+	}
+	return fmt.Errorf("must be one of %s, optionally after atLeast: or atMost:, got %v", strings.Join(targetWidths, ", "), v)
+}
+
 // checkToggleTargets checks that every element an Action.ToggleVisibility
 // shows or hides exists: a wrong id is not a schema error, the button just
 // does nothing.
@@ -279,6 +301,15 @@ func Test_validateCard_teamsElements(t *testing.T) {
 			name:    "max height without px",
 			body:    `{"type":"Container","maxHeight":"200","items":[{"type":"TextBlock","text":"x"}]}`,
 			wantErr: "must be \"<number>px\"",
+		},
+		{
+			name: "column limited to wider cards",
+			body: `{"type":"ColumnSet","columns":[{"type":"Column","targetWidth":"atLeast:Standard","items":[{"type":"TextBlock","text":"x"}]}]}`,
+		},
+		{
+			name:    "target width typo",
+			body:    `{"type":"TextBlock","text":"x","targetWidth":"atleast:Phone"}`,
+			wantErr: "must be one of VeryNarrow",
 		},
 		{
 			name:    "border on a text block",

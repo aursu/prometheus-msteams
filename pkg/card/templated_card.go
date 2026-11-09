@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/sprig/v3"
 	"github.com/prometheus/alertmanager/notify/webhook"
@@ -199,7 +200,9 @@ func ParseTemplateFile(f string) (*template.Template, error) {
 //     functions Helm charts use, except env and expandenv
 //   - toYaml and fromYaml, as in Helm
 //   - counter: {{ $c := counter }}{{ call $c }} gives 0, 1, 2, ...
-//   - mdEscape and labelMatchers, see below
+//   - mdEscape, labelMatchers and shortDuration, see below
+//   - now and since, as in Alertmanager and sprig, but on this package's
+//     clock, so that tests can fix the time
 //
 // (Before, the functions came from Helm 2's template engine, which also
 // had toToml; Helm 2 is no longer maintained.)
@@ -233,7 +236,42 @@ func extraFuncs() map[string]any {
 	}
 	funcs["mdEscape"] = mdEscape
 	funcs["labelMatchers"] = labelMatchers
+	funcs["shortDuration"] = shortDuration
+	// Function literals that call clock when the template runs, not when
+	// the map is built: a test that replaces clock is seen by both.
+	funcs["now"] = func() time.Time { return clock() }
+	funcs["since"] = func(t time.Time) time.Duration { return clock().Sub(t) }
 	return funcs
+}
+
+// clock is the time the templates see through now and since. It is a
+// variable holding a function so that a test can replace it with one that
+// returns a fixed time.
+var clock = time.Now
+
+// shortDuration writes a duration the way a person says it, to the minute:
+// "less than a minute", "10 min", "2 h 5 min", "3 d 4 h". Seconds are left
+// out, and from one day on the minutes too: on a card that is read later
+// they are noise.
+func shortDuration(d time.Duration) string {
+	minutes := int(d / time.Minute)
+	switch {
+	case minutes < 1:
+		return "less than a minute"
+	case minutes < 60:
+		return fmt.Sprintf("%d min", minutes)
+	case minutes < 24*60:
+		if m := minutes % 60; m != 0 {
+			return fmt.Sprintf("%d h %d min", minutes/60, m)
+		}
+		return fmt.Sprintf("%d h", minutes/60)
+	default:
+		days, hours := minutes/(24*60), minutes%(24*60)/60
+		if hours != 0 {
+			return fmt.Sprintf("%d d %d h", days, hours)
+		}
+		return fmt.Sprintf("%d d", days)
+	}
 }
 
 // markdownEscaper puts a backslash before each character that Teams'

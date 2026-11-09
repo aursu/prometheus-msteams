@@ -3,6 +3,7 @@ package card
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/alertmanager/template"
 )
@@ -52,6 +53,54 @@ func Test_extraFuncs(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// fixClock makes now and since in templates see the time at, until the
+// test ends.
+func fixClock(t *testing.T, at time.Time) {
+	t.Helper()
+	old := clock
+	clock = func() time.Time { return at }
+	t.Cleanup(func() { clock = old })
+}
+
+// now and since in a template follow the package clock.
+func Test_clockFuncs(t *testing.T) {
+	tmpl, err := ParseTemplateFile(writeTemplate(t, `{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixClock(t, time.Date(2026, 11, 9, 20, 44, 0, 0, time.UTC))
+	data := map[string]any{"Start": time.Date(2026, 11, 9, 20, 34, 0, 0, time.UTC)}
+	got, err := tmpl.ExecuteTextString(`{{ now.Format "15:04" }} {{ since .Start | shortDuration }}`, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "20:44 10 min"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func Test_shortDuration(t *testing.T) {
+	tests := []struct {
+		in   time.Duration
+		want string
+	}{
+		{in: 0, want: "less than a minute"},
+		{in: 59 * time.Second, want: "less than a minute"},
+		{in: time.Minute, want: "1 min"},
+		{in: 10*time.Minute + 59*time.Second, want: "10 min"},
+		{in: time.Hour, want: "1 h"},
+		{in: 2*time.Hour + 5*time.Minute, want: "2 h 5 min"},
+		{in: 24 * time.Hour, want: "1 d"},
+		{in: 3*24*time.Hour + 4*time.Hour + 30*time.Minute, want: "3 d 4 h"},
+		{in: -time.Minute, want: "less than a minute"},
+	}
+	for _, tt := range tests {
+		if got := shortDuration(tt.in); got != tt.want {
+			t.Errorf("shortDuration(%v) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 

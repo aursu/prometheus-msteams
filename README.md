@@ -163,9 +163,9 @@ connectors_with_custom_templates:
 - request_path: /high_priority_channel
   webhook_url_file: /etc/teams/high
 # A template of its own.
-- request_path: /with_buttons
-  webhook_url_file: /etc/teams/buttons
-  template_file: ./examples/templates/default-message-workflow-card-actions.tmpl
+- request_path: /compact
+  webhook_url_file: /etc/teams/compact
+  template_file: ./templates/compact.tmpl
   escape_underscores: false  # as -auto-escape-underscores; see Card templates
 
 # The URL written into this file, with the template given by
@@ -228,7 +228,6 @@ helps to build one.
 
 - [default-message-workflow-card.tmpl](./default-message-workflow-card.tmpl):
   the default, used by `-template-file`
-- [examples/](./examples): more templates
 
 Functions available in templates:
 

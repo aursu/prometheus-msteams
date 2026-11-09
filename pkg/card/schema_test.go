@@ -33,7 +33,6 @@ const (
 var cardTemplates = []string{
 	"../../default-message-workflow-card.tmpl",
 	"./testdata/workflow_*.tmpl",
-	"../../examples/templates/*workflow*.tmpl",
 }
 
 // compileCardSchema loads and compiles the schema file once per test.

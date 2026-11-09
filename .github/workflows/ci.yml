@@ -1,15 +1,18 @@
-# Tests every push and pull request; on master and on version tags it also
-# publishes the container image to the GitHub Container Registry:
-#   ghcr.io/<owner>/prometheus-msteams:master, :sha-<commit>  (push to master)
-#   ghcr.io/<owner>/prometheus-msteams:<tag>, :latest         (tag v*)
-# A pull request builds the image without publishing it.
+# Tests every push and pull request, and builds the image. Only a version
+# tag publishes the image to the GitHub Container Registry, under that
+# version and nothing else:
+#   git tag v1.2.0 && git push origin v1.2.0
+#   -> ghcr.io/<owner>/prometheus-msteams:v1.2.0
+# There is no moving tag (no :latest, no :master): a deployment names the
+# exact version it runs.
 # Only GitHub's own actions are used; the rest is plain go and docker.
 name: ci
 
 on:
   push:
     branches: [master]
-    tags: ['v*']
+    # vMAJOR.MINOR.PATCH, optionally with a pre-release suffix (v1.2.0-rc.1).
+    tags: ['v[0-9]+.[0-9]+.[0-9]+', 'v[0-9]+.[0-9]+.[0-9]+-*']
   pull_request:
 
 permissions:
@@ -69,17 +72,10 @@ jobs:
         run: docker run --rm "$IMAGE:build" -version
 
       - name: push
-        if: github.event_name == 'push'
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            tags="$GITHUB_REF_NAME latest"
-          else
-            tags="master sha-${GITHUB_SHA::7}"
-          fi
-          for tag in $tags; do
-            docker tag "$IMAGE:build" "$IMAGE:$tag"
-            docker push "$IMAGE:$tag"
-          done
+          docker tag "$IMAGE:build" "$IMAGE:$GITHUB_REF_NAME"
+          docker push "$IMAGE:$GITHUB_REF_NAME"

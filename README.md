@@ -86,10 +86,12 @@ A flag on the command line wins.
 ### Container image
 
 ```
-ghcr.io/aursu/prometheus-msteams:master        # the latest commit on master
-ghcr.io/aursu/prometheus-msteams:sha-<commit>  # one commit
-ghcr.io/aursu/prometheus-msteams:<tag>         # a release, also :latest
+ghcr.io/aursu/prometheus-msteams:v<major>.<minor>.<patch>
 ```
+
+Images are published for version tags only, one image tag per release and
+no moving tags (no `latest`): a deployment names the version it runs. The
+program reports the same version (`-version`, and in the startup log).
 
 The image holds only the program (`/promteams`), the default template
 (`/default-message-workflow-card.tmpl`) and the CA certificates, and runs
@@ -97,8 +99,13 @@ as user and group 65532, not root. `make docker` builds it locally; the
 Dockerfile compiles the program itself.
 
 GitHub Actions ([.github/workflows/ci.yml](./.github/workflows/ci.yml))
-test every push and pull request and publish the image from master and
-from `v*` tags.
+test and build every push and pull request. A tag `vX.Y.Z` (or
+`vX.Y.Z-rc.N`) publishes the image `:vX.Y.Z`:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ### Try it without Alertmanager
 
@@ -367,7 +374,7 @@ spec:
     fsGroup: 65532           # the image's group; the Secret files get it
   containers:
   - name: prometheus-msteams
-    image: ghcr.io/aursu/prometheus-msteams:master
+    image: ghcr.io/aursu/prometheus-msteams:v1.0.0
     args:
     - -config-file=/etc/config/connectors.yaml
     volumeMounts:

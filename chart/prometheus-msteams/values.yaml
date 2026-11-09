@@ -1,109 +1,85 @@
----
-replicaCount: 1
+# The Teams channels: one request path per Teams Workflow. Alertmanager
+# posts to http://<service>:<port><path>.
+channels: []
+# - path: /critical
+#   # The key of urlSecret that holds this channel's Workflow URL.
+#   urlKey: critical
+#   # Optional: a template from "templates" below, by name; without it the
+#   # default template is used.
+#   template: compact
+#   # Optional: -auto-escape-underscores for this channel; only for
+#   # templates that do not escape values themselves.
+#   escapeUnderscores: false
+
+# The Secret with the Workflow URLs, one key per channel. Required. It is
+# not created by this chart: the URLs are credentials and do not belong in
+# values. Create it with kubectl, External Secrets, Sealed Secrets, ...
+# The service reads the URLs at startup; restart it after a change.
+urlSecret:
+  name: ""
+
+# Card templates of your own, by name. Each defines "teams.card"; see the
+# project README for the data and functions available.
+templates: {}
+#   compact: |
+#     {{ define "teams.card" }}
+#     ...
+#     {{ end }}
+
+# The template for channels without "template": a name from "templates".
+# Empty: the default template built into the image.
+defaultTemplate: ""
+
+# More command-line flags, e.g. -max-card-size=20000 or -debug.
+extraArgs: []
 
 image:
-  repository: quay.io/prometheusmsteams/prometheus-msteams
-  tag: v1.5.3
-  pullPolicy: Always
-
+  repository: ghcr.io/aursu/prometheus-msteams
+  # Empty: the chart's appVersion, the release this chart was made for.
+  tag: ""
+  pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-extraEnvs: {}
-
-container:
-  port: 2000
-  additionalArgs: []
-
-resources: {}
-#  limits:
-#    cpu: 10m
-#    memory: 32Mi
-#  requests:
-#    cpu: 1m
-#    memory: 8Mi
+replicaCount: 1
 
 service:
   type: ClusterIP
   port: 2000
 
-serviceAccount:
-  # Specifies whether a service account should be created
-  create: false
-  # Annotations to add to the service account
-  annotations: {}
-  # The name of the service account to use.
-  # If not set and create is true, a name is generated using the fullname template
-  name: ""
+# A ServiceMonitor for the Prometheus Operator, scraping /metrics.
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
 
-nodeSelector: {}
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
 
-tolerations: []
-
-affinity: {}
-
-containerSecurityContext: {}
-
+# The image runs as 65532:65532. fsGroup gives the mounted Secret files that
+# group, so the service can read them with mode 0440.
 podSecurityContext:
-  runAsUser: 1000
   runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
 
+podLabels: {}
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
 priorityClassName: ""
 
-# Custom labels for pod assignment
-podLabels: {}
-
-metrics:
-  serviceMonitor:
-    enabled: false
-    additionalLabels: {}
-    scrapeInterval: 30s
-
-## Specify the custom message card template for MS teams
-customCardTemplate: ""
-# customCardTemplate: |
-#   {{ define "teams.card" }}
-#   {...}
-#   {{ end }}
-
-templateFile: /etc/template/card.tmpl
-
-extraConfigmapMounts: []
-# extraConfigmapMounts:
-#   - name: customConfigMap
-#     configMap:
-#       name: customConfigMapName
-
-## Additional Volume mounts
-extraVolumeMounts: []
-# extraVolumeMounts:
-#   - name: volume-name
-#     mountPath: /etc/custom_path
-
-connectors: []
-
-# ref: https://github.com/prometheus-msteams/prometheus-msteams#customise-messages-per-ms-teams-channel
-connectorsWithCustomTemplates: []
-# - request_path: /alert2
-#   template_file: |
-#     {{ define "teams.card" }}
-#     {...}
-#     {{ end }}
-#   webhook_url: <webhook>
-#   escape_underscores: true
-
-# Env from existing secrets or configmaps (in same namespace), will passed through to contains 'envFrom'
-envFrom: {}
-# envFrom:
-#   - secretRef:
-#       name: my-prometheus-msteams-env-secret
-#   - configMapRef:
-#       name: my-prometheus-msteams-env-cm
-
-# Whether to use the new Microsoft Workflow webhooks
-workflowWebhook: false
-
-# Allow PodDisruptionBudget to be configured
-podDisruptionBudget:
-  enabled: false
-  # maxUnavailable: 1
-  # minAvailable: 1
+nameOverride: ""
+fullnameOverride: ""

@@ -1,0 +1,40 @@
+{{- /* The service's configuration: one entry per channel, the URL read from
+       the mounted Secret. It holds no URL, so it can be a ConfigMap. */}}
+{{- if not .Values.channels }}
+{{- fail "channels: at least one channel is required" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "promteams.fullname" . }}
+  labels:
+    {{- include "promteams.labels" . | nindent 4 }}
+data:
+  connectors.yaml: |
+    connectors_with_custom_templates:
+    {{- range .Values.channels }}
+    {{- $where := printf "channel %s" (required "channels: every channel needs a path" .path) }}
+    - request_path: {{ .path | quote }}
+      webhook_url_file: {{ printf "/etc/teams/%s" (required (printf "%s: urlKey is required" $where) .urlKey) | quote }}
+      {{- with .template }}
+      {{- include "promteams.checkTemplate" (list $ . $where) }}
+      template_file: {{ include "promteams.templatePath" . | quote }}
+      {{- end }}
+      {{- if .escapeUnderscores }}
+      escape_underscores: true
+      {{- end }}
+    {{- end }}
+{{- with .Values.templates }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "promteams.fullname" $ }}-templates
+  labels:
+    {{- include "promteams.labels" $ | nindent 4 }}
+data:
+  {{- range $name, $text := . }}
+  {{ $name }}.tmpl: |
+    {{- $text | trimSuffix "\n" | nindent 4 }}
+  {{- end }}
+{{- end }}

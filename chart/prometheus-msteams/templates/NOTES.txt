@@ -1,6 +1,8 @@
-** Please be patient while the chart is being deployed **
+In Alertmanager, send each receiver to its channel's path:
+{{- range .Values.channels }}
+  http://{{ include "promteams.fullname" $ }}.{{ $.Release.Namespace }}:{{ $.Values.service.port }}{{ .path }}
+{{- end }}
 
-To monitor the deployment, execute the following command:
-
-	kubectl get pods -l app={{ template "app.name" . }}  --namespace {{ .Release.Namespace }} -w
-
+The Workflow URLs are read from the Secret {{ .Values.urlSecret.name }} at startup.
+After changing them, restart the service:
+  kubectl -n {{ .Release.Namespace }} rollout restart deployment/{{ include "promteams.fullname" . }}

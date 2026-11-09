@@ -1,0 +1,22 @@
+# Every option the chart has, for `helm lint` and chart/test.sh.
+channels:
+  - path: /critical
+    urlKey: critical
+  - path: /compact
+    urlKey: warnings
+    template: compact
+  - path: /legacy
+    urlKey: legacy
+    escapeUnderscores: true
+urlSecret:
+  name: teams-urls
+templates:
+  compact: |
+    {{ define "teams.card" }}{"type": "message"}{{ end }}
+defaultTemplate: compact
+extraArgs:
+  - -max-card-size=20000
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack

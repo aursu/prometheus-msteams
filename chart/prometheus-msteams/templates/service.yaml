@@ -1,36 +1,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ template "app.name" . }}
+  name: {{ include "promteams.fullname" . }}
   labels:
-    app: {{ template "app.name" . }}
-    chart: {{ template "app.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "promteams.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
-  {{- if eq .Values.service.type "LoadBalancer" }}
-  {{- if .Values.service.loadBalancerIP }}
-  loadBalancerIP: {{ .Values.service.loadBalancerIP | quote }}
-  {{- end }}
-  {{- if .Values.service.loadBalancerSourceRanges }}
-  loadBalancerSourceRanges:
-    {{- range .Values.service.loadBalancerSourceRanges }}
-    - {{ . | quote }}
-    {{- end }}
-  {{- end }}
-  {{- end }}
-  {{- if .Values.service.externalTrafficPolicy }}
-  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
-  {{- end }}
   ports:
-    - port: {{ .Values.service.port }}
+    - name: http
+      port: {{ .Values.service.port }}
       targetPort: http
       protocol: TCP
-  {{- if .Values.service.externalIPs }}
-  externalIPs:
-    {{- toYaml .Values.service.externalIPs | nindent 4 }}
-  {{- end }}
   selector:
-    app: {{ template "app.name" . }}
-    release: {{ .Release.Name }}
+    {{- include "promteams.selectorLabels" . | nindent 4 }}

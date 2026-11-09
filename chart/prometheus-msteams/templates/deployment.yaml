@@ -1,116 +1,116 @@
-apiVersion: {{ template "deployment.apiVersion" . }}
+{{- $secret := required "urlSecret.name: the Secret with the Workflow URLs is required" .Values.urlSecret.name }}
+{{- with .Values.defaultTemplate }}
+{{- include "promteams.checkTemplate" (list $ . "defaultTemplate") }}
+{{- end }}
+apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ template "app.name" . }}
+  name: {{ include "promteams.fullname" . }}
   labels:
-    app: {{ template "app.name" . }}
-    chart: {{ template "app.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "promteams.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: {{ template "app.name" . }}
-      release: {{ .Release.Name }}
+      {{- include "promteams.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: {{ template "app.name" . }}
-        release: {{ .Release.Name }}
-{{- if .Values.podLabels }}
-{{ toYaml .Values.podLabels | indent 8 }}
-{{- end }}
+        {{- include "promteams.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/configMapConfig.yaml") . | sha256sum }}
-        checksum/msteams-card-templates: {{ include (print $.Template.BasePath "/configMapTemplate.yaml") . | sha256sum }}
-{{- if .Values.podAnnotations }}
-{{ toYaml .Values.podAnnotations | indent 8 }}
-{{- end }}
+        # The configuration is read once, at startup: a changed ConfigMap
+        # changes this checksum, and with it the pods are replaced.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
-      serviceAccountName: {{ include "app.serviceAccountName" . }}
-      {{- if .Values.imagePullSecrets }}
+      # The service does not talk to the Kubernetes API.
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
-{{ toYaml .Values.imagePullSecrets | indent 8 }}
+        {{- toYaml . | nindent 8 }}
       {{- end }}
-      volumes:
-        - name: config-volume
-          configMap:
-            name: {{ template "app.name" . }}-config
-        - name: card-template-volume
-          configMap:
-            name: {{ template "app.name" . }}-card-template
-      {{- if .Values.extraConfigmapMounts }}
-      {{ toYaml .Values.extraConfigmapMounts | nindent 8 }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: {{ .Chart.Name }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-{{- if .Values.containerSecurityContext }}
-          securityContext:
-{{ toYaml .Values.containerSecurityContext | indent 12 }}
-{{- end }}
+        - name: prometheus-msteams
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          env:
-            {{- range $key, $value := $.Values.extraEnvs }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-            {{- end }}
-          {{- if .Values.envFrom }}
-          envFrom:
-            {{- toYaml .Values.envFrom | nindent 12 }}
-          {{- end }}
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/config
-            - name: card-template-volume
-              mountPath: /etc/template
-          {{- if .Values.extraVolumeMounts }}
-          {{ toYaml .Values.extraVolumeMounts | nindent 12 }}
-          {{- end }}
           args:
             - -config-file=/etc/config/connectors.yaml
-            - -template-file={{ .Values.templateFile }}
-{{- if .Values.workflowWebhook }}
-            - -workflow-webhook={{ .Values.workflowWebhook }}
-{{- end }}
-          {{- with .Values.container.additionalArgs }}
-{{ toYaml . | indent 12 }}
-          {{- end}}
+            {{- with .Values.defaultTemplate }}
+            - -template-file={{ include "promteams.templatePath" . }}
+            {{- end }}
+            {{- with .Values.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
-          - name: http
-            containerPort: {{ .Values.container.port }}
-            protocol: TCP
+            - name: http
+              containerPort: 2000
+              protocol: TCP
           readinessProbe:
             httpGet:
-              path: /config
+              path: /-/ready
               port: http
-            initialDelaySeconds: 1
-            periodSeconds: 3
+            periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /config
+              path: /-/healthy
               port: http
-            initialDelaySeconds: 10
             periodSeconds: 20
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
           resources:
-{{ toYaml .Values.resources | indent 12 }}
-    {{- with .Values.podSecurityContext }}
-      securityContext:
-{{ toYaml . | indent 8 }}
-    {{- end }}
-    {{- with .Values.nodeSelector }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config
+              readOnly: true
+            - name: urls
+              mountPath: /etc/teams
+              readOnly: true
+            {{- if .Values.templates }}
+            - name: templates
+              mountPath: /etc/templates
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "promteams.fullname" . }}
+        - name: urls
+          secret:
+            secretName: {{ $secret }}
+            # Owner root, group fsGroup (podSecurityContext): readable by
+            # the service, by no other user.
+            defaultMode: 0440
+        {{- if .Values.templates }}
+        - name: templates
+          configMap:
+            name: {{ include "promteams.fullname" . }}-templates
+        {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
       nodeSelector:
-{{ toYaml . | indent 8 }}
-    {{- end }}
-    {{- with .Values.affinity }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
       affinity:
-{{ toYaml . | indent 8 }}
-    {{- end }}
-    {{- with .Values.tolerations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
       tolerations:
-{{ toYaml . | indent 8 }}
-    {{- end }}
-    {{- if .Values.priorityClassName }}
-      priorityClassName: {{ .Values.priorityClassName }}
-    {{- end }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

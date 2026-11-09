@@ -1,17 +1,11 @@
-{{/* vim: set filetype=mustache: */}}
-{{/*
-Expand the name of the chart.
-*/}}
-{{- define "app.name" -}}
+{{/* The chart's name, or nameOverride. */}}
+{{- define "promteams.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{/*
-Create a default fully qualified app.name.
-We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-If release name contains chart name it will be used as a full name.
-*/}}
-{{- define "app.fullname" -}}
+{{/* The name of every object: fullnameOverride, else the release name, with
+     the chart name appended unless the release name already contains it. */}}
+{{- define "promteams.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
@@ -24,31 +18,31 @@ If release name contains chart name it will be used as a full name.
 {{- end -}}
 {{- end -}}
 
-{{/*
-Create chart name and version as used by the chart label.
-*/}}
-{{- define "app.chart" -}}
-{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
+{{/* Labels that select the pods; they never change after the first install. */}}
+{{- define "promteams.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "promteams.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{/*
-Return the appropriate apiVersion for deployment.
-*/}}
-{{- define "deployment.apiVersion" -}}
-{{- if semverCompare ">=1.9-0" .Capabilities.KubeVersion.GitVersion -}}
-{{- print "apps/v1" -}}
-{{- else -}}
-{{- print "apps/v1beta2" -}}
-{{- end -}}
+{{/* Labels on every object. */}}
+{{- define "promteams.labels" -}}
+{{ include "promteams.selectorLabels" . }}
+app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "app.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "app.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
-{{- end }}
+{{/* The path of a template from .Values.templates inside the container. */}}
+{{- define "promteams.templatePath" -}}
+/etc/templates/{{ . }}.tmpl
+{{- end -}}
+
+{{/* Fails unless the template name is defined in .Values.templates.
+     Called with a list: (root context, name, where it was used). */}}
+{{- define "promteams.checkTemplate" -}}
+{{- $root := index . 0 -}}
+{{- $name := index . 1 -}}
+{{- if not (hasKey $root.Values.templates $name) -}}
+{{- fail (printf "%s: template %q is not in templates" (index . 2) $name) -}}
+{{- end -}}
+{{- end -}}

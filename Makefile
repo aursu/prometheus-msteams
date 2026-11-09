@@ -51,6 +51,9 @@ lint:
 test:
 	go test ./... -race
 
+chart-test:
+	sh chart/test.sh
+
 coverage:
 	go test ./... -race -coverprofile=coverage.txt -covermode=atomic
 

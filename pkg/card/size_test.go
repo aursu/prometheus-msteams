@@ -52,18 +52,16 @@ func bigGroup(t *testing.T, n int) webhook.Message {
 	return msg
 }
 
-// shownAlerts counts the alerts in a default-template card: one FactSet
-// each.
+// shownAlerts counts the alerts in a default-template card: a group has a
+// table with a header row and one row per alert, a single alert no table.
 func shownAlerts(t *testing.T, c json.RawMessage) int {
 	t.Helper()
-	body, _ := firstCard(t, c)["body"].([]interface{})
-	n := 0
-	for _, el := range body {
-		if m, _ := el.(map[string]interface{}); m["type"] == "FactSet" {
-			n++
-		}
+	tables := findElements(firstCard(t, c), "Table")
+	if len(tables) == 0 {
+		return 1
 	}
-	return n
+	rows, _ := tables[0]["rows"].([]interface{})
+	return len(rows) - 1
 }
 
 // A card within the limit is the same as without the limiter.

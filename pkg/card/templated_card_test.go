@@ -90,8 +90,9 @@ func Test_templatedCard_Convert(t *testing.T) {
 		checkFn func(t *testing.T, got json.RawMessage)
 	}{
 		{
-			// The default workflow template uses TextBlock and FactSet elements.
-			name:         "default template keeps TextBlock and FactSet",
+			// The default template, one firing alert: heading, summary,
+			// description, time, facts, and the collapsed labels section.
+			name:         "default template layout",
 			templateFile: "../../default-message-workflow-card.tmpl",
 			checkFn: func(t *testing.T, got json.RawMessage) {
 				t.Helper()
@@ -102,13 +103,13 @@ func Test_templatedCard_Convert(t *testing.T) {
 						types = append(types, typ)
 					}
 				}
-				wantTypes := []string{testTextBlockType, testTextBlockType, testTextBlockType, "FactSet"}
+				wantTypes := []string{"ColumnSet", testTextBlockType, testTextBlockType, testTextBlockType, "FactSet", "Container"}
 				if diff := cmp.Diff(wantTypes, types); diff != "" {
 					t.Fatalf("body element types mismatch (-want +got):\n%s", diff)
 				}
-				facts, ok := body[len(body)-1]["facts"].([]interface{})
+				facts, ok := body[4]["facts"].([]interface{})
 				if !ok || len(facts) == 0 {
-					t.Fatalf("FactSet element missing facts, got: %v", body[len(body)-1])
+					t.Fatalf("FactSet element missing facts, got: %v", body[4])
 				}
 			},
 		},

@@ -1,108 +1,298 @@
 {{ define "teams.card" }}
+{{- /*
+  The default card: one Adaptive Card per Alertmanager notification (one
+  alert group).
 
-{{- $cardHeadingLineColor := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAAAAABqswrmAAAAEElEQVR42mJogEBAAAAA//8ICAIBsBUbsAAAAABJRU5ErkJggg==" }}
-{{- /* Heading colour: "=" assigns the variable declared here; ":=" inside
-       the if blocks would declare a new one that dies with the block, which
-       left the heading colour always empty. "Default" when nothing matches. */ -}}
-{{- $headingColor := "Default" }}
-{{- if eq .Status "resolved" -}}
-  {{- $cardHeadingLineColor = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mLQPa6LjAEBAAD//yQwBIUSNPBIAAAAAElFTkSuQmCC" -}}
-  {{- $headingColor = "Good" }}
-{{- else if eq .Status "firing" -}}
-  {{- if eq .CommonLabels.severity "critical" -}}
-  {{- $cardHeadingLineColor = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mLokZJCxoAAAAD//xnYAwEPSWrRAAAAAElFTkSuQmCC" }}
-  {{- $headingColor = "Attention" }}
-  {{- else if eq .CommonLabels.severity "warning" -}}
-  {{- $cardHeadingLineColor = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mL4v5QBGQMCAAD//ziMBpHr7M3UAAAAAElFTkSuQmCC" }}
-  {{- $headingColor = "Warning" }}
+    [icon] AlertName ×N                        heading: what fired, how many
+           FIRING  critical  cluster  N alerts badges: status, severity, where
+    summary                                    once for the group
+    description
+    Started 20:34 · firing for 10 min          resolved: Lasted 13 min · 20:56 – 21:09
+    facts                                      the labels worth reading
+    table                                      a group: one row per alert, scrolls
+    > Troubleshooting                          collapsed: access, check, mitigate
+    > All labels and annotations               collapsed
+    [Alertmanager] [Silence] [Runbook] [Graph]
+
+  How it is written: the card is built as data - dict (a JSON object), list
+  (a JSON array), append, set - and written once, at the end, with toJson.
+  toJson quotes and escapes every value, so no label or annotation can break
+  the JSON, and there are no commas to get wrong. Texts that Teams reads as
+  markdown go through mdEscape first, so that "a_b" stays "a_b".
+
+  Teams-only elements (Icon, Badge, CodeBlock) each carry a fallback: what
+  Teams mobile and other clients without them show instead. Times are
+  written as the Adaptive Card functions {{TIME()}} and {{DATE()}}, which
+  Teams shows in the reader's own time zone.
+
+  A variable assigned inside if or range with "=" changes the one declared
+  outside; ":=" there would declare a new one that ends with the block.
+*/ -}}
+
+{{- /* ---- Settings ------------------------------------------------------ */ -}}
+
+{{- /* Labels never shown as facts: shown elsewhere on the card (alertname,
+       severity, cluster) or of no use to the reader. */ -}}
+{{- $hiddenLabels := stringSlice "alertname" "severity" "cluster" "prometheus" "endpoint" "container" "service" -}}
+{{- /* In a group, the label that tells the alerts apart: the first of these
+       that the alerts do not all share. It heads the table's first column. */ -}}
+{{- $rowLabels := stringSlice "instance" "pod" "name" "job" "container" -}}
+{{- /* Annotations shown in their own place, so not repeated under "All
+       labels and annotations". */ -}}
+{{- $shownAnnotations := stringSlice "summary" "description" "access" "check" "mitigate" "runbook_url" "runbook" -}}
+{{- /* The Adaptive Card time functions take RFC 3339 times. */ -}}
+{{- $rfc3339 := "2006-01-02T15:04:05Z07:00" -}}
+
+{{- /* ---- The group ------------------------------------------------------ */ -}}
+
+{{- $firing := eq .Status "firing" -}}
+{{- $n := len .Alerts -}}
+{{- $one := eq $n 1 -}}
+{{- $first := index .Alerts 0 -}}
+{{- /* All alerts of the group, the ones left out of the card included. */ -}}
+{{- $total := add $n .TruncatedAlerts -}}
+{{- $severity := index .CommonLabels "severity" -}}
+{{- $alertname := index .CommonLabels "alertname" | default (index .GroupLabels "alertname") | default "Alert" -}}
+{{- /* The labels that select this group in Alertmanager. */ -}}
+{{- $groupLabels := .GroupLabels -}}
+{{- if not $groupLabels }}{{ $groupLabels = .CommonLabels }}{{ end -}}
+{{- /* Summary and description: the alert's, or the ones the group's alerts
+       share. When they differ, the table shows each alert's summary. */ -}}
+{{- $summary := index .CommonAnnotations "summary" -}}
+{{- $description := index .CommonAnnotations "description" -}}
+{{- if $one -}}
+  {{- $summary = index $first.Annotations "summary" -}}
+  {{- $description = index $first.Annotations "description" -}}
+{{- end -}}
+{{- $rowKey := "" -}}
+{{- if not $one -}}
+  {{- range $rowLabels -}}
+    {{- if and (not $rowKey) (index $first.Labels .) (not (index $.CommonLabels .)) }}{{ $rowKey = . }}{{ end -}}
   {{- end -}}
 {{- end -}}
-{{- /* The line under the heading: the summary annotation, else the message
-       annotation, else the alert name. */ -}}
-{{- $subtitle := "Prometheus Alert" }}
-{{- if .CommonAnnotations.summary }}{{ $subtitle = .CommonAnnotations.summary }}
-{{- else if .CommonAnnotations.message }}{{ $subtitle = .CommonAnnotations.message }}
-{{- else if .CommonLabels.alertname }}{{ $subtitle = .CommonLabels.alertname }}
-{{- end }}
-{{- /* Escaping, everywhere a label or annotation value is written:
-       mdEscape keeps "_", "*", "[" and "]" from being read as markdown,
-       toJson writes the value as a JSON string, quotes included, so that
-       quotes and line breaks in it cannot break the card. */}}
-{
-  "type":"message",
-  "attachments":[
-  {
-      "contentType":"application/vnd.microsoft.card.adaptive",
-      "contentUrl":null,
-      "content":{
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-        "type": "AdaptiveCard",
-        "version": "1.2",
-        "backgroundImage": {
-            "url": "{{- $cardHeadingLineColor -}}",
-            "fillMode": "RepeatHorizontally"
-        },
-        "msteams": {
-            "width": "Full"
-        },
-        "body": [
-            {
-              "type": "TextBlock",
-              "text": "Prometheus Alert ({{ .Status | title }})",
-              "weight": "bolder",
-              "size": "medium",
-              "style": "heading",
-              "color": "{{- $headingColor -}}"
-            },
-            {
-              "type": "TextBlock",
-              "text": {{ $subtitle | mdEscape | toJson }},
-              "wrap": true
-            },
-            {{$externalUrl := .ExternalURL}}
-            {{- range $index, $alert := .Alerts }}{{- if $index }},{{- end }}
-            {
-              "type": "TextBlock",
-              "text": {{ printf "[%s](%s)" ($alert.Annotations.description | mdEscape) $externalUrl | toJson }},
-              "wrap": true
-            },
-            {
-              "type": "FactSet",
-              "facts": [
-                {{- /* One fact per annotation except "description" (shown
-                       above). The whole fact, braces included, is inside the
-                       if; before, "description" produced an empty {}. */ -}}
-                {{- range $key, $value := $alert.Annotations }}
-                {{- if ne $key "description" }}
-                {
-                    "title": {{ $key | mdEscape | toJson }},
-                    "value": {{ $value | mdEscape | toJson }}
-                },
-                {{- end -}}
-                {{- end -}}
-                {{$c := counter}}{{ range $key, $value := $alert.Labels }}{{if call $c}},{{ end }}
-                {
-                  "title": {{ $key | mdEscape | toJson }},
-                  "value": {{ $value | mdEscape | toJson }}
-                }
-                {{- end }}
-              ]
-            }
-          {{- end }}
-          {{- /* Alerts of the group not in the card: left out to keep the
-                 card within Teams' size limit, or cut by Alertmanager's
-                 webhook max_alerts. The link opens Alertmanager's list
-                 filtered to the group's common labels. */}}
-          {{- if .TruncatedAlerts }},
-            {
-              "type": "TextBlock",
-              "text": {{ printf "%d more alerts not shown. [Open the group in Alertmanager](%s/#/alerts?silenced=true&inhibited=true&active=true&filter=%s)" .TruncatedAlerts .ExternalURL (labelMatchers .CommonLabels | urlquery) | toJson }},
-              "wrap": true,
-              "isSubtle": true
-            }
-          {{- end }}
-        ]
-      }
-  }]
-}
+
+{{- /* Colours and icon by status and severity. strip is the coloured line
+       along the top of the card: a 1x4 pixel image repeated horizontally. */ -}}
+{{- $look := dict
+      "strip" "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAAAAABqswrmAAAAEElEQVR42mJogEBAAAAA//8ICAIBsBUbsAAAAABJRU5ErkJggg=="
+      "icon" "Info" "color" "Accent" "status" "Accent" "severity" "Informative" -}}
+{{- if not $firing -}}
+  {{- $look = dict
+        "strip" "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mLQPa6LjAEBAAD//yQwBIUSNPBIAAAAAElFTkSuQmCC"
+        "icon" "CheckmarkCircle" "color" "Good" "status" "Good" "severity" "Subtle" -}}
+{{- else if eq $severity "critical" -}}
+  {{- $look = dict
+        "strip" "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mLokZJCxoAAAAD//xnYAwEPSWrRAAAAAElFTkSuQmCC"
+        "icon" "ErrorCircle" "color" "Attention" "status" "Attention" "severity" "Attention" -}}
+{{- else if eq $severity "warning" -}}
+  {{- $look = dict
+        "strip" "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEklEQVR42mL4v5QBGQMCAAD//ziMBpHr7M3UAAAAAElFTkSuQmCC"
+        "icon" "Warning" "color" "Warning" "status" "Warning" "severity" "Warning" -}}
+{{- end -}}
+
+{{- /* When: the group's earliest start, and for a resolved group its latest
+       end. The date is added when the alert started over 12 hours ago. */ -}}
+{{- $start := $first.StartsAt -}}
+{{- $end := $first.EndsAt -}}
+{{- range .Alerts -}}
+  {{- if .StartsAt.Before $start }}{{ $start = .StartsAt }}{{ end -}}
+  {{- if .EndsAt.After $end }}{{ $end = .EndsAt }}{{ end -}}
+{{- end -}}
+{{- $startAt := dateInZone $rfc3339 $start "UTC" -}}
+{{- $startText := printf "{{TIME(%s)}}" $startAt -}}
+{{- if gt (since $start).Hours 12.0 }}{{ $startText = printf "{{DATE(%s, SHORT)}} %s" $startAt $startText }}{{ end -}}
+{{- $when := printf "Started %s · firing for %s" $startText (since $start | shortDuration) -}}
+{{- if not $firing -}}
+  {{- $when = printf "Lasted %s · %s – {{TIME(%s)}}" ($end.Sub $start | shortDuration) $startText (dateInZone $rfc3339 $end "UTC") -}}
+{{- end -}}
+
+{{- /* ---- Heading: icon, alert name, badges ------------------------------ */ -}}
+
+{{- $title := $alertname | mdEscape -}}
+{{- if gt $total 1 }}{{ $title = printf "%s ×%d" $title $total }}{{ end -}}
+{{- $badgeSpecs := list (dict "text" (upper .Status) "style" $look.status "appearance" "Filled") -}}
+{{- with $severity }}{{ $badgeSpecs = append $badgeSpecs (dict "text" . "style" $look.severity "appearance" "Tint") }}{{ end -}}
+{{- with index .CommonLabels "cluster" }}{{ $badgeSpecs = append $badgeSpecs (dict "text" . "style" "Default" "appearance" "Tint") }}{{ end -}}
+{{- if gt $total 1 }}{{ $badgeSpecs = append $badgeSpecs (dict "text" (printf "%d alerts" $total) "style" "Default" "appearance" "Tint") }}{{ end -}}
+{{- $badges := list -}}
+{{- range $badgeSpecs -}}
+  {{- $badges = append $badges (dict "type" "Column" "width" "auto" "spacing" "Small" "items" (list
+        (dict "type" "Badge" "text" .text "style" .style "appearance" .appearance "size" "Medium"
+              "fallback" (dict "type" "TextBlock" "text" (mdEscape .text) "size" "Small" "weight" "Bolder" "color" $look.color)))) -}}
+{{- end -}}
+
+{{- $body := list (dict "type" "ColumnSet" "columns" (list
+      (dict "type" "Column" "width" "auto" "items" (list
+          (dict "type" "Icon" "name" $look.icon "size" "Medium" "color" $look.color "style" "Filled" "fallback" "drop")))
+      (dict "type" "Column" "width" "stretch" "items" (list
+          (dict "type" "TextBlock" "text" $title "size" "Large" "weight" "Bolder" "wrap" true)
+          (dict "type" "ColumnSet" "spacing" "Small" "columns" $badges))))) -}}
+
+{{- /* ---- What happened -------------------------------------------------- */ -}}
+
+{{- with $summary }}{{ $body = append $body (dict "type" "TextBlock" "text" (mdEscape .) "wrap" true) }}{{ end -}}
+{{- with $description }}{{ $body = append $body (dict "type" "TextBlock" "text" (mdEscape .) "wrap" true "isSubtle" true "spacing" "Small") }}{{ end -}}
+{{- $body = append $body (dict "type" "TextBlock" "text" $when "size" "Small" "isSubtle" true "wrap" true "spacing" "Small") -}}
+
+{{- /* Facts: for one alert its labels, for a group the labels its alerts
+       share - minus the hidden ones. KV.Remove returns a copy without the
+       given names. */ -}}
+{{- $factLabels := $first.Labels -}}
+{{- if not $one }}{{ $factLabels = .CommonLabels }}{{ end -}}
+{{- $facts := list -}}
+{{- range $k, $v := $factLabels.Remove $hiddenLabels -}}
+  {{- $facts = append $facts (dict "title" (mdEscape $k) "value" (mdEscape $v)) -}}
+{{- end -}}
+{{- if $facts }}{{ $body = append $body (dict "type" "FactSet" "facts" $facts) }}{{ end -}}
+
+{{- /* ---- A group: one table row per alert ------------------------------- */ -}}
+
+{{- if not $one -}}
+  {{- $rows := list (dict "type" "TableRow" "cells" (list
+        (dict "type" "TableCell" "items" (list (dict "type" "TextBlock" "text" ($rowKey | default "alert") "weight" "Bolder")))
+        (dict "type" "TableCell" "items" (list (dict "type" "TextBlock" "text" "since" "weight" "Bolder" "horizontalAlignment" "Right"))))) -}}
+  {{- range .Alerts -}}
+    {{- $what := list -}}
+    {{- if $rowKey }}{{ $what = append $what (dict "type" "TextBlock" "text" (index .Labels $rowKey | mdEscape) "fontType" "Monospace" "wrap" true) }}{{ end -}}
+    {{- /* Each alert's own summary, when the group has none in common. */ -}}
+    {{- if not $summary -}}
+      {{- with index .Annotations "summary" }}{{ $what = append $what (dict "type" "TextBlock" "text" (mdEscape .) "wrap" true "isSubtle" true "spacing" "None") }}{{ end -}}
+    {{- end -}}
+    {{- if not $what }}{{ $what = append $what (dict "type" "TextBlock" "text" (index .Labels "alertname" | mdEscape) "wrap" true) }}{{ end -}}
+    {{- $since := "resolved" -}}
+    {{- if eq .Status "firing" }}{{ $since = printf "{{TIME(%s)}}" (dateInZone $rfc3339 .StartsAt "UTC") }}{{ end -}}
+    {{- $rows = append $rows (dict "type" "TableRow" "cells" (list
+          (dict "type" "TableCell" "items" $what)
+          (dict "type" "TableCell" "items" (list (dict "type" "TextBlock" "text" $since "isSubtle" true "horizontalAlignment" "Right"))))) -}}
+  {{- end -}}
+  {{- /* maxHeight (Teams): about six rows show, the rest scroll. */ -}}
+  {{- $body = append $body (dict "type" "Container" "maxHeight" "220px" "items" (list
+        (dict "type" "Table" "firstRowAsHeader" true "showGridLines" false
+              "columns" (list (dict "width" 3) (dict "width" 1)) "rows" $rows))) -}}
+{{- end -}}
+
+{{- /* Alerts of the group not in the card: left out to keep it within Teams'
+       size limit, or cut by Alertmanager's webhook max_alerts. */ -}}
+{{- if .TruncatedAlerts -}}
+  {{- $line := printf "%d more alerts not shown." .TruncatedAlerts -}}
+  {{- with .ExternalURL -}}
+    {{- $line = printf "%s [Open the group in Alertmanager](%s/#/alerts?silenced=true&inhibited=true&active=true&filter=%s)" $line . (labelMatchers $groupLabels | urlquery) -}}
+  {{- end -}}
+  {{- $body = append $body (dict "type" "TextBlock" "text" $line "size" "Small" "isSubtle" true "wrap" true) -}}
+{{- end -}}
+
+{{- /* ---- Collapsed sections (firing only) ------------------------------- */ -}}
+
+{{- /* Troubleshooting, from the rule's annotations: access (where to look,
+       how to get in), check (shell commands that confirm the problem),
+       mitigate (how to stop the damage). They are markdown written by the
+       rule's author, so they are not escaped; check is shown as code. When
+       the alerts of a group have different ones, the first alert's are
+       shown, and the card says so. */ -}}
+{{- $steps := dict -}}
+{{- $fromFirst := false -}}
+{{- range stringSlice "access" "check" "mitigate" -}}
+  {{- $v := index $.CommonAnnotations . | default (index $first.Annotations .) -}}
+  {{- if $v }}{{ $_ := set $steps . (trim $v) }}{{ end -}}
+  {{- if and (not $one) (not (index $.CommonAnnotations .)) (index $first.Annotations .) }}{{ $fromFirst = true }}{{ end -}}
+{{- end -}}
+{{- $runbook := index .CommonAnnotations "runbook_url" | default (index $first.Annotations "runbook_url")
+      | default (index .CommonAnnotations "runbook") | default (index $first.Annotations "runbook") | trim -}}
+
+{{- /* Each section: id, title, icon, a hint shown on the collapsed line,
+       and its items. */ -}}
+{{- $sections := list -}}
+{{- if and $firing $steps -}}
+  {{- $items := list -}}
+  {{- if $fromFirst -}}
+    {{- $for := index $first.Labels $rowKey | default (index $first.Annotations "summary") -}}
+    {{- $items = append $items (dict "type" "TextBlock" "text" (printf "For the first alert of the group: %s" (mdEscape $for)) "size" "Small" "isSubtle" true "wrap" true) -}}
+  {{- end -}}
+  {{- with $steps.access -}}
+    {{- $items = append $items (dict "type" "TextBlock" "text" "ACCESS" "size" "Small" "weight" "Bolder" "isSubtle" true) -}}
+    {{- $items = append $items (dict "type" "TextBlock" "text" . "wrap" true "spacing" "Small") -}}
+  {{- end -}}
+  {{- with $steps.check -}}
+    {{- $items = append $items (dict "type" "TextBlock" "text" "CHECK" "size" "Small" "weight" "Bolder" "isSubtle" true) -}}
+    {{- $items = append $items (dict "type" "CodeBlock" "codeSnippet" . "language" "Bash" "spacing" "Small"
+          "fallback" (dict "type" "TextBlock" "text" (mdEscape .) "fontType" "Monospace" "wrap" true)) -}}
+  {{- end -}}
+  {{- with $steps.mitigate -}}
+    {{- $items = append $items (dict "type" "TextBlock" "text" "MITIGATE FIRST, ROOT CAUSE LATER" "size" "Small" "weight" "Bolder" "isSubtle" true) -}}
+    {{- $items = append $items (dict "type" "TextBlock" "text" . "wrap" true "spacing" "Small") -}}
+  {{- end -}}
+  {{- with $runbook }}{{ $items = append $items (dict "type" "TextBlock" "text" (printf "[Full runbook](%s)" .) "wrap" true) }}{{ end -}}
+  {{- $hint := list -}}
+  {{- range stringSlice "access" "check" "mitigate" }}{{ if index $steps . }}{{ $hint = append $hint . }}{{ end }}{{ end -}}
+  {{- $sections = append $sections (dict "id" "troubleshooting" "title" "Troubleshooting" "icon" "Wrench" "hint" (join " · " $hint) "items" $items) -}}
+{{- end -}}
+
+{{- /* All labels and annotations: everything, for one alert its own, for a
+       group what its alerts share. */ -}}
+{{- if $firing -}}
+  {{- $labels := $first.Labels -}}
+  {{- $annotations := $first.Annotations -}}
+  {{- if not $one }}{{ $labels = .CommonLabels }}{{ $annotations = .CommonAnnotations }}{{ end -}}
+  {{- $all := list -}}
+  {{- range $k, $v := $labels }}{{ $all = append $all (dict "title" (mdEscape $k) "value" (mdEscape $v)) }}{{ end -}}
+  {{- range $k, $v := $annotations.Remove $shownAnnotations }}{{ $all = append $all (dict "title" (mdEscape $k) "value" (mdEscape $v)) }}{{ end -}}
+  {{- if $all -}}
+    {{- $sections = append $sections (dict "id" "details" "title" "All labels and annotations" "icon" "List" "hint" (len $all | toString)
+          "items" (list (dict "type" "FactSet" "facts" $all))) -}}
+  {{- end -}}
+{{- end -}}
+
+{{- /* A section is a bordered container: a heading line and a hidden body.
+       Selecting the heading (Action.ToggleVisibility) shows or hides the
+       body and swaps the arrow: two arrows, one of them hidden. */ -}}
+{{- range $sections -}}
+  {{- $bodyId := printf "%s-body" .id -}}
+  {{- $closedId := printf "%s-closed" .id -}}
+  {{- $openId := printf "%s-open" .id -}}
+  {{- $body = append $body (dict "type" "Container" "showBorder" true "roundedCorners" true "spacing" "Medium" "items" (list
+        (dict "type" "ColumnSet"
+              "selectAction" (dict "type" "Action.ToggleVisibility" "title" .title "targetElements" (list $bodyId $closedId $openId))
+              "columns" (list
+                  (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "items" (list
+                      (dict "type" "TextBlock" "id" $closedId "text" "▸")
+                      (dict "type" "TextBlock" "id" $openId "text" "▾" "isVisible" false "spacing" "None")))
+                  (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "items" (list
+                      (dict "type" "Icon" "name" .icon "size" "xSmall" "fallback" "drop")))
+                  (dict "type" "Column" "width" "stretch" "verticalContentAlignment" "Center" "items" (list
+                      (dict "type" "TextBlock" "text" .title "weight" "Bolder")))
+                  (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "items" (list
+                      (dict "type" "TextBlock" "text" .hint "size" "Small" "isSubtle" true)))))
+        (dict "type" "Container" "id" $bodyId "isVisible" false "items" .items))) -}}
+{{- end -}}
+
+{{- /* ---- Buttons -------------------------------------------------------- */ -}}
+
+{{- /* Alertmanager: the group's alerts. Silence: a new silence with the
+       matchers filled in - the alert's labels, for a group the group's.
+       Runbook: the rule's runbook_url. Graph: the rule's expression in
+       Prometheus. A resolved group keeps only Graph. */ -}}
+{{- $actions := list -}}
+{{- if and $firing .ExternalURL -}}
+  {{- $silence := $groupLabels -}}
+  {{- if $one }}{{ $silence = $first.Labels }}{{ end -}}
+  {{- $actions = append $actions (dict "type" "Action.OpenUrl" "title" "Alertmanager" "iconUrl" "icon:Open"
+        "url" (printf "%s/#/alerts?filter=%s" .ExternalURL (labelMatchers $groupLabels | urlquery))) -}}
+  {{- $actions = append $actions (dict "type" "Action.OpenUrl" "title" "Silence" "iconUrl" "icon:AlertSnooze"
+        "url" (printf "%s/#/silences/new?filter=%s" .ExternalURL (labelMatchers $silence | urlquery))) -}}
+{{- end -}}
+{{- if and $firing $runbook }}{{ $actions = append $actions (dict "type" "Action.OpenUrl" "title" "Runbook" "iconUrl" "icon:BookOpen" "url" $runbook) }}{{ end -}}
+{{- with $first.GeneratorURL }}{{ $actions = append $actions (dict "type" "Action.OpenUrl" "title" "Graph" "iconUrl" "icon:DataTrending" "url" .) }}{{ end -}}
+
+{{- /* ---- The card ------------------------------------------------------- */ -}}
+
+{{- $card := dict
+      "type" "AdaptiveCard"
+      "$schema" "http://adaptivecards.io/schemas/adaptive-card.json"
+      "version" "1.5"
+      "msteams" (dict "width" "Full")
+      "backgroundImage" (dict "url" $look.strip "fillMode" "RepeatHorizontally")
+      "fallbackText" (printf "[%s] %s: %s" (upper .Status) $alertname $summary)
+      "body" $body -}}
+{{- if $actions }}{{ $_ := set $card "actions" $actions }}{{ end -}}
+{{- dict "type" "message" "attachments" (list (dict "contentType" "application/vnd.microsoft.card.adaptive" "content" $card)) | toJson -}}
 {{ end }}

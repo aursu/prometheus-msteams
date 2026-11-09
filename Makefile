@@ -30,8 +30,14 @@ darwin:
 windows:
 	CGO_ENABLED=0 GOOS=windows GOARCH=$(GOARCH) go build $(LDFLAGS) -o $(BINDIR)/$(BINARY)-windows-$(GOARCH).exe ./cmd/server
 
+# The image compiles the program itself (see Dockerfile); no local Go needed.
 docker:
-	docker build -t $(BINARY):$(VERSION) .
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg BRANCH=$(BRANCH) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(BINARY):$(VERSION) .
 
 run:
 	go run ./cmd/server -http-addr=localhost:2000 $(RUN_ARGS)

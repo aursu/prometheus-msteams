@@ -1,1 +1,8 @@
+# Not needed to build the image; keeps the build context small.
+.git/
+.github/
+bin/
+chart/
+docs/
 vendor/
+coverage.txt

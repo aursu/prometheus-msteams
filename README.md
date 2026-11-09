@@ -339,12 +339,47 @@ Logs go to stderr. The full alert and the rendered card are logged with
 
 ## Kubernetes
 
-A Helm chart is in [chart/prometheus-msteams](./chart/prometheus-msteams).
-It still follows the upstream project (image, MessageCard template) and is
-being reworked.
+The Workflow URLs go into a Secret, one key per channel, which the pod
+mounts as files; the configuration, which then holds no secret, goes into a
+ConfigMap. The Secret is yours to create (kubectl, External Secrets, Sealed
+Secrets, ...): the chart below takes only its name, so no URL is ever in
+Helm values or in git.
 
-Without the chart: the Workflow URLs go into a Secret, mounted as files;
-the configuration, which then holds no secret, into a ConfigMap.
+### Helm chart
+
+Published with every release, in the same version as the image (chart
+`X.Y.Z` deploys image `vX.Y.Z`):
+
+```bash
+helm install prometheus-msteams oci://ghcr.io/aursu/charts/prometheus-msteams \
+  --version X.Y.Z -f values.yaml
+```
+
+```yaml
+# values.yaml
+urlSecret:
+  name: prometheus-msteams-urls     # keys "critical" and "warnings"
+channels:
+- path: /critical                   # Alertmanager posts to http://<service>:2000/critical
+  urlKey: critical
+- path: /warnings
+  urlKey: warnings
+  template: compact                 # optional, from "templates"
+templates:
+  compact: |
+    {{ define "teams.card" }}
+    ...
+    {{ end }}
+serviceMonitor:
+  enabled: true
+```
+
+All values, with comments: [chart/prometheus-msteams/values.yaml](./chart/prometheus-msteams/values.yaml).
+The pod runs as 65532 with a read-only root file system; a changed
+configuration or template replaces the pods by itself, a changed Secret
+needs a restart (see below).
+
+### Without the chart
 
 ```yaml
 apiVersion: v1

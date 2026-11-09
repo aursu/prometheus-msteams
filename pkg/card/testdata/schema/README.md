@@ -12,10 +12,19 @@ it is not part of the built program.
 | SHA-256 | `32c91fb285180a266a55b3475dd0396e63fe079311714d3a14963b41f5e17920` |
 | License | MIT, Copyright (c) 2017 Microsoft - see `LICENSE-adaptive-card-schema` |
 
-The file is stored unchanged. The schema does not know the Teams extension
-`msteams` (for example `"msteams": {"width": "Full"}`) and forbids unknown
-properties on the card, so the test removes `msteams` before validating and
-checks it separately.
+The file is stored unchanged. The schema does not know what only Teams
+renders, and forbids unknown properties and element types, so the test
+handles these before validating:
+
+- the card extension `msteams` (for example `"msteams": {"width": "Full"}`):
+  checked to be an object, then removed (`schema_test.go`);
+- the Teams-only elements `Badge`, `Icon`, `CodeBlock`: checked against the
+  Teams documentation, and each must have a `fallback`, which takes its place
+  for the schema check (`teams_elements_test.go`);
+- the Teams-only properties `showBorder`, `roundedCorners`, `maxHeight`:
+  checked, then removed (`teams_elements_test.go`).
+
+Microsoft publishes no JSON schema with the Teams-only parts.
 
 To update: download the file of the new version from the same repository,
 pin the commit, update the table above and the file name in the test.

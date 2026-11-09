@@ -151,8 +151,9 @@ func attachmentCards(t *testing.T, msg json.RawMessage) []json.RawMessage {
 	return cards
 }
 
-// validateCard checks one card against the schema, plus the two things the
-// schema does not cover: the Teams extension "msteams" and the card version.
+// validateCard checks one card against the schema, plus what the schema does
+// not cover: the Teams extension "msteams", the card version, the targets of
+// toggle buttons, and the Teams-only elements and properties.
 func validateCard(schema *jsonschema.Schema, card json.RawMessage) error {
 	var obj map[string]interface{}
 	if err := json.Unmarshal(card, &obj); err != nil {
@@ -161,7 +162,8 @@ func validateCard(schema *jsonschema.Schema, card json.RawMessage) error {
 
 	// "msteams" is a Teams extension the schema does not know, and the
 	// schema forbids unknown card properties. Check it is an object, then
-	// validate the card without it. This is the only exception.
+	// validate the card without it. The Teams-only elements and properties
+	// inside the card are handled below.
 	if ext, ok := obj["msteams"]; ok {
 		if _, isObject := ext.(map[string]interface{}); !isObject {
 			return fmt.Errorf("msteams must be an object, got %T", ext)
@@ -172,9 +174,18 @@ func validateCard(schema *jsonschema.Schema, card json.RawMessage) error {
 	if err := checkCardVersion(obj["version"]); err != nil {
 		return err
 	}
+	if err := checkToggleTargets(obj); err != nil {
+		return err
+	}
+	// Teams-only elements and properties: checked, then replaced by their
+	// fallback or removed (teams_elements_test.go).
+	open, _, err := replaceTeamsElements(obj, "")
+	if err != nil {
+		return err
+	}
 
 	// The validator needs the card in its own generic form.
-	stripped, err := json.Marshal(obj)
+	stripped, err := json.Marshal(open)
 	if err != nil {
 		return err
 	}

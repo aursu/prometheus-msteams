@@ -2,7 +2,7 @@
 # is an empty image (scratch) that receives only the program, the default
 # template and the CA certificates. No shell, no package manager.
 
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 
 WORKDIR /src
 # The modules first, as a layer of their own: it is rebuilt only when

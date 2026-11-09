@@ -119,7 +119,7 @@ This service answers:
 |---|---|---|
 | 200 | Teams accepted the card | done |
 | 400 | the request is not an Alertmanager message | gives up |
-| 422 | the card cannot be built from the template, or Teams refused it for good: 400 (card rejected), 404 (Workflow deleted), 413 (too large) | gives up |
+| 422 | the card cannot be built from the template (or is above `-max-card-size` even with one alert), or Teams refused it for good: 400 (card rejected), 404 (Workflow deleted), 413 (too large) | gives up |
 | 502 | Teams answered 429 or 5xx, or could not be reached | retries |
 | 504 | Teams did not answer within `-teams-timeout` | retries |
 
@@ -239,6 +239,18 @@ annotation value and turns `_` into `\_`. That also changes values used in
 links. Do not combine it with templates that escape themselves, such as
 the ones here: the text would show extra backslashes.
 
+### Large alert groups
+
+Teams refuses a message above about 28 KB. A card larger than
+`-max-card-size` (24 KiB by default) is built again with fewer alerts: as
+many as fit, firing ones first. The number left out is added to
+`.TruncatedAlerts`, the field Alertmanager also sets when its webhook
+`max_alerts` cuts a group; the templates here then end the card with "N
+more alerts not shown" and a link to the group in Alertmanager. If not
+even one alert fits, nothing is sent and Alertmanager is answered 422.
+Each shortened card is logged as a warning ("card too large, alerts left
+out").
+
 ## Metrics and health checks
 
 | Path | |
@@ -274,6 +286,8 @@ plus the Go runtime and process metrics.
     	Disable validation of the server certificate.
   -log-format string
     	json|fmt (default "json")
+  -max-card-size int
+    	The largest card sent to Teams, in bytes. A larger card shows only as many alerts as fit and says how many are left out. 0 means no limit. (default 24576)
   -max-idle-conns int
     	The HTTP client maximum number of idle connections (default 100)
   -max-retry-count int

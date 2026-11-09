@@ -181,7 +181,7 @@ func renderDefault(t *testing.T, msg webhook.Message) map[string]any {
 }
 
 func endpointLabels(name, instance string) template.KV {
-	return template.KV{"alertname": "EndpointDown", "severity": "critical", "cluster": "office",
+	return template.KV{"alertname": "EndpointDown", "severity": "critical", "cluster": "prod",
 		"job": "blackbox", "name": name, "instance": instance}
 }
 
@@ -209,7 +209,7 @@ func Test_defaultCard_firingAlert(t *testing.T) {
 			t.Errorf("no text %q in %q", want, texts)
 		}
 	}
-	if got, want := badgesOf(card), []string{"FIRING", "critical", "office"}; !slices.Equal(got, want) {
+	if got, want := badgesOf(card), []string{"FIRING", "critical", "prod"}; !slices.Equal(got, want) {
 		t.Errorf("badges = %q, want %q", got, want)
 	}
 	icon := findElements(card, "Icon")[0]

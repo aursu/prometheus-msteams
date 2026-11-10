@@ -4,7 +4,8 @@
   alert group).
 
     [icon] AlertName ×N                        heading: what fired, how many
-           FIRING  critical  cluster  N alerts badges: status, severity, where
+           Cluster: prod · Namespace/web · Deployment/api   where: from labels
+           FIRING  critical  N alerts          badges: status, severity, count
     summary                                    once for the group
     description
     Started 20:34 · firing for 10 min          resolved: Lasted 13 min · 20:56 – 21:09
@@ -32,8 +33,21 @@
 {{- /* ---- Settings ------------------------------------------------------ */ -}}
 
 {{- /* Labels never shown as facts: shown elsewhere on the card (alertname,
-       severity, cluster) or of no use to the reader. */ -}}
-{{- $hiddenLabels := stringSlice "alertname" "severity" "cluster" "prometheus" "endpoint" "container" "service" -}}
+       severity, the "where" line) or of no use to the reader. */ -}}
+{{- $hiddenLabels := stringSlice "alertname" "severity"
+      "datacenter" "project" "environment" "env" "cluster" "host" "namespace" "object"
+      "prometheus" "endpoint" "container" "service" -}}
+{{- /* The "where" line, general to specific: a title and the labels that
+       give its value - the first of them the alert has. */ -}}
+{{- $whereLabels := list
+      (list "IDC" "datacenter") (list "Project" "project") (list "Env" "environment" "env")
+      (list "Cluster" "cluster") (list "Host" "host") -}}
+{{- /* The Kubernetes object an alert is about, when it has no "object"
+       label: the first of these labels it has, shown as Kind/name. */ -}}
+{{- $objectLabels := list
+      (list "deployment" "Deployment") (list "statefulset" "StatefulSet") (list "daemonset" "DaemonSet")
+      (list "cronjob" "CronJob") (list "job_name" "Job") (list "persistentvolumeclaim" "PersistentVolumeClaim")
+      (list "horizontalpodautoscaler" "HorizontalPodAutoscaler") (list "pod" "Pod") (list "node" "Node") -}}
 {{- /* In a group, the label that tells the alerts apart: the first of these
        that the alerts do not all share. It heads the table's first column. */ -}}
 {{- $rowLabels := stringSlice "instance" "pod" "name" "job" "container" -}}
@@ -71,6 +85,38 @@
   {{- end -}}
 {{- end -}}
 
+{{- /* Where: what the alert is about, general to specific. First the parts
+       of $whereLabels as "Title: value", then the Kubernetes namespace and
+       object as Kind/name, the way kubectl names them:
+         IDC: eu-1 · Project: shop · Env: prod · Host: web1
+         Env: prod · Cluster: prod · Namespace/web · Deployment/api
+       Each part only when the alert (for a group: all its alerts) has the
+       label. object is the "object" label, else the first Kubernetes label
+       of $objectLabels. The line is what the reader sees first, also where
+       the channel name is not shown (the Teams activity feed). */ -}}
+{{- $at := $first.Labels -}}
+{{- if not $one }}{{ $at = .CommonLabels }}{{ end -}}
+{{- $where := list -}}
+{{- range $whereLabels -}}
+  {{- $partTitle := index . 0 -}}
+  {{- $value := "" -}}
+  {{- range rest . }}{{ if not $value }}{{ $value = index $at . }}{{ end }}{{ end -}}
+  {{- with $value }}{{ $where = append $where (printf "%s: %s" $partTitle (mdEscape .)) }}{{ end -}}
+{{- end -}}
+{{- with index $at "namespace" }}{{ $where = append $where (printf "Namespace/%s" (mdEscape .)) }}{{ end -}}
+{{- $objKey := "" -}}
+{{- $object := index $at "object" -}}
+{{- if not $object -}}
+  {{- range $objectLabels -}}
+    {{- if and (not $object) (index $at (index . 0)) -}}
+      {{- $objKey = index . 0 -}}
+      {{- $object = printf "%s/%s" (index . 1) (index $at $objKey) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- with $object }}{{ $where = append $where (mdEscape .) }}{{ end -}}
+{{- $whereText := join " · " $where -}}
+
 {{- /* Colours and icon by status and severity. strip is the coloured line
        along the top of the card: a 1x4 pixel image repeated horizontally. */ -}}
 {{- $look := dict
@@ -106,13 +152,12 @@
   {{- $when = printf "Lasted %s · %s – {{TIME(%s)}}" ($end.Sub $start | shortDuration) $startText (dateInZone $rfc3339 $end "UTC") -}}
 {{- end -}}
 
-{{- /* ---- Heading: icon, alert name, badges ------------------------------ */ -}}
+{{- /* ---- Heading: icon, alert name, where, badges ----------------------- */ -}}
 
 {{- $title := $alertname | mdEscape -}}
 {{- if gt $total 1 }}{{ $title = printf "%s ×%d" $title $total }}{{ end -}}
 {{- $badgeSpecs := list (dict "text" (upper .Status) "style" $look.status "appearance" "Filled") -}}
 {{- with $severity }}{{ $badgeSpecs = append $badgeSpecs (dict "text" . "style" $look.severity "appearance" "Tint") }}{{ end -}}
-{{- with index .CommonLabels "cluster" }}{{ $badgeSpecs = append $badgeSpecs (dict "text" . "style" "Default" "appearance" "Tint") }}{{ end -}}
 {{- if gt $total 1 }}{{ $badgeSpecs = append $badgeSpecs (dict "text" (printf "%d alerts" $total) "style" "Default" "appearance" "Tint") }}{{ end -}}
 {{- $badges := list -}}
 {{- range $badgeSpecs -}}
@@ -121,12 +166,13 @@
               "fallback" (dict "type" "TextBlock" "text" (mdEscape .text) "size" "Small" "weight" "Bolder" "color" $look.color)))) -}}
 {{- end -}}
 
+{{- $heading := list (dict "type" "TextBlock" "text" $title "size" "Large" "weight" "Bolder" "wrap" true) -}}
+{{- with $whereText }}{{ $heading = append $heading (dict "type" "TextBlock" "text" . "weight" "Bolder" "isSubtle" true "wrap" true "spacing" "None") }}{{ end -}}
+{{- $heading = append $heading (dict "type" "ColumnSet" "spacing" "Small" "columns" $badges) -}}
 {{- $body := list (dict "type" "ColumnSet" "columns" (list
       (dict "type" "Column" "width" "auto" "items" (list
           (dict "type" "Icon" "name" $look.icon "size" "Medium" "color" $look.color "style" "Filled" "fallback" "drop")))
-      (dict "type" "Column" "width" "stretch" "items" (list
-          (dict "type" "TextBlock" "text" $title "size" "Large" "weight" "Bolder" "wrap" true)
-          (dict "type" "ColumnSet" "spacing" "Small" "columns" $badges))))) -}}
+      (dict "type" "Column" "width" "stretch" "items" $heading))) -}}
 
 {{- /* ---- What happened -------------------------------------------------- */ -}}
 
@@ -135,12 +181,10 @@
 {{- $body = append $body (dict "type" "TextBlock" "text" $when "size" "Small" "isSubtle" true "wrap" true "spacing" "Small") -}}
 
 {{- /* Facts: for one alert its labels, for a group the labels its alerts
-       share - minus the hidden ones. KV.Remove returns a copy without the
-       given names. */ -}}
-{{- $factLabels := $first.Labels -}}
-{{- if not $one }}{{ $factLabels = .CommonLabels }}{{ end -}}
+       share - minus the hidden ones and the ones the "where" line shows.
+       KV.Remove returns a copy without the given names. */ -}}
 {{- $facts := list -}}
-{{- range $k, $v := $factLabels.Remove $hiddenLabels -}}
+{{- range $k, $v := ($at.Remove $hiddenLabels).Remove (stringSlice $objKey) -}}
   {{- $facts = append $facts (dict "title" (mdEscape $k) "value" (mdEscape $v)) -}}
 {{- end -}}
 {{- if $facts }}{{ $body = append $body (dict "type" "FactSet" "facts" $facts) }}{{ end -}}
@@ -293,7 +337,7 @@
       "version" "1.5"
       "msteams" (dict "width" "Full")
       "backgroundImage" (dict "url" $look.strip "fillMode" "RepeatHorizontally")
-      "fallbackText" (printf "[%s] %s: %s" (upper .Status) $alertname $summary)
+      "fallbackText" (printf "[%s] %s: %s" (upper .Status) (list $alertname $whereText | compact | join " · ") $summary)
       "body" $body -}}
 {{- if $actions }}{{ $_ := set $card "actions" $actions }}{{ end -}}
 {{- dict "type" "message" "attachments" (list (dict "contentType" "application/vnd.microsoft.card.adaptive" "content" $card)) | toJson -}}

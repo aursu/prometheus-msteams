@@ -88,6 +88,22 @@ func factsOf(card map[string]any) map[string]string {
 	return m
 }
 
+// summaryFactTitles returns the titles of the facts under the summary - a
+// FactSet directly in the body, not the one inside "All labels and
+// annotations" - in order.
+func summaryFactTitles(card map[string]any) []string {
+	var titles []string
+	body, _ := card["body"].([]any)
+	for _, el := range body {
+		if fs, _ := el.(map[string]any); fs["type"] == "FactSet" {
+			for _, f := range fs["facts"].([]any) {
+				titles = append(titles, f.(map[string]any)["title"].(string))
+			}
+		}
+	}
+	return titles
+}
+
 // actionTitles returns the titles of the card's buttons, in order.
 func actionTitles(card map[string]any) []string {
 	var titles []string
@@ -193,8 +209,8 @@ var troubleshooting = template.KV{
 	"runbook_url": "https://runbooks.example.org/endpoint-down",
 }
 
-// One firing alert: heading, badges, time, facts, both sections, all four
-// buttons.
+// One firing alert: heading, where, badges, time, facts, both sections, all
+// four buttons.
 func Test_defaultCard_firingAlert(t *testing.T) {
 	card := renderDefault(t, group("firing",
 		alertAt("firing", 10, endpointLabels("www", "https://www.example.org/"), troubleshooting)))
@@ -202,6 +218,7 @@ func Test_defaultCard_firingAlert(t *testing.T) {
 	texts := textsOf(card)
 	for _, want := range []string{
 		"EndpointDown",
+		"Cluster: prod", // where: only the cluster is known
 		"the site fails",
 		"Started {{TIME(2026-11-09T20:34:00Z)}} · firing for 10 min",
 	} {
@@ -209,7 +226,7 @@ func Test_defaultCard_firingAlert(t *testing.T) {
 			t.Errorf("no text %q in %q", want, texts)
 		}
 	}
-	if got, want := badgesOf(card), []string{"FIRING", "critical", "prod"}; !slices.Equal(got, want) {
+	if got, want := badgesOf(card), []string{"FIRING", "critical"}; !slices.Equal(got, want) {
 		t.Errorf("badges = %q, want %q", got, want)
 	}
 	icon := findElements(card, "Icon")[0]
@@ -259,6 +276,80 @@ func Test_defaultCard_firingAlert(t *testing.T) {
 	}
 	if got := actionURL(card, "Graph"); got != "https://prom.example.org/graph?g0.expr=up" {
 		t.Errorf("Graph URL = %q", got)
+	}
+}
+
+// The "where" line: general to specific, from the labels the alert has.
+func Test_defaultCard_where(t *testing.T) {
+	tests := []struct {
+		name      string
+		labels    template.KV
+		where     string
+		facts     []string // fact titles, in order
+		noneFacts []string // labels that must not be facts
+	}{
+		{
+			name: "Kubernetes object from its label",
+			labels: template.KV{"alertname": "KubeDeploymentReplicasMismatch", "severity": "warning",
+				"env": "prod", "cluster": "prod-1", "namespace": "web", "deployment": "api", "job": "kube-state-metrics"},
+			where:     "Env: prod · Cluster: prod-1 · Namespace/web · Deployment/api",
+			facts:     []string{"job"},
+			noneFacts: []string{"env", "cluster", "namespace", "deployment"},
+		},
+		{
+			name: "every part; the object label wins over the Kubernetes labels",
+			labels: template.KV{"alertname": "EndpointDown", "severity": "critical", "datacenter": "eu-1",
+				"project": "shop", "env": "prod", "cluster": "prod-1", "namespace": "web",
+				"object": "Service/www", "pod": "www-1"},
+			where: "IDC: eu-1 · Project: shop · Env: prod · Cluster: prod-1 · Namespace/web · Service/www",
+			// pod is not the object here, so it stays a fact.
+			facts:     []string{"pod"},
+			noneFacts: []string{"datacenter", "project", "env", "cluster", "namespace", "object"},
+		},
+		{
+			name: "not Kubernetes: environment wins over env",
+			labels: template.KV{"alertname": "EndpointDown", "severity": "critical", "datacenter": "eu-1",
+				"project": "shop", "environment": "stage", "env": "other", "host": "web1.example.org", "name": "shop"},
+			where:     "IDC: eu-1 · Project: shop · Env: stage · Host: web1.example.org",
+			facts:     []string{"name"},
+			noneFacts: []string{"datacenter", "project", "environment", "host"},
+		},
+		{
+			name:   "nothing known",
+			labels: template.KV{"alertname": "Watchdog", "severity": "none"},
+			where:  "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			card := renderDefault(t, group("firing", alertAt("firing", 5, tt.labels, template.KV{"summary": "s"})))
+			body := card["body"].([]any)
+			// The first element is the heading: the icon column, then the
+			// column with the title, the where line and the badges.
+			heading := body[0].(map[string]any)["columns"].([]any)[1].(map[string]any)
+			// Under the title: the where line (a TextBlock), or straight away
+			// the badges (a ColumnSet) when nothing is known.
+			second := heading["items"].([]any)[1].(map[string]any)
+			if tt.where == "" {
+				if second["type"] != "ColumnSet" {
+					t.Errorf("under the title: %v, want the badges", second)
+				}
+			} else if second["type"] != "TextBlock" || second["text"] != tt.where {
+				t.Errorf("under the title: %v, want the where line %q", second, tt.where)
+			}
+			titles := summaryFactTitles(card)
+			if tt.facts != nil && !slices.Equal(titles, tt.facts) {
+				t.Errorf("fact titles = %q, want %q", titles, tt.facts)
+			}
+			for _, l := range tt.noneFacts {
+				if slices.Contains(titles, l) {
+					t.Errorf("%s is a fact as well as in the where line", l)
+				}
+			}
+			if fb, _ := card["fallbackText"].(string); tt.where != "" && !strings.Contains(fb, tt.where) {
+				t.Errorf("fallbackText %q does not say where", fb)
+			}
+		})
 	}
 }
 
@@ -318,8 +409,13 @@ func Test_defaultCard_groupSharedSummary(t *testing.T) {
 	if !slices.Contains(texts, "Started {{TIME(2026-11-09T20:14:00Z)}} · firing for 30 min") {
 		t.Errorf("no start of the earliest alert in %q", texts)
 	}
-	if got := factsOf(card)["namespace"]; got != "web" {
-		t.Errorf("fact namespace = %q, want the shared label", got)
+	// The shared namespace is the "where" line, not a fact; the pods differ,
+	// so there is no object.
+	if !slices.Contains(texts, "Namespace/web") {
+		t.Errorf("no where line with the shared namespace in %q", texts)
+	}
+	if slices.Contains(summaryFactTitles(card), "namespace") {
+		t.Error("namespace is shown as a fact as well as in the where line")
 	}
 
 	table := findElements(card, "Table")

@@ -226,11 +226,12 @@ one card per notification (one alert group):
 
 ```
 [icon] HighMemoryLoad ×3                      the alert name; ×N for a group
-       FIRING  critical  prod  3 alerts       status, severity, cluster label, count
+       Env: prod · Cluster: prod-1 · Namespace/web    where it happened
+       FIRING  critical  3 alerts             status, severity, count
 Memory usage above 90%                        summary, once
 Swap is in use on the node.                   description
 Started 20:34 · firing for 10 min             resolved: Lasted 13 min · 20:34 – 20:47
-namespace  web                                the labels worth reading
+job        node-exporter                      the labels worth reading
 instance              since                   a group: one row per alert, scrolls
 node-1:9100           20:34
 ...
@@ -241,13 +242,36 @@ node-1:9100           20:34
 
 - **Colours**: red for critical, orange for warning, blue otherwise, green
   when resolved.
+- **Where** - the line under the alert name - says what the alert is
+  about, general to specific, from these labels when the alert has them
+  (for a group, when all its alerts share them). Context reads
+  `Title: value`; Kubernetes objects read `Kind/name`, as kubectl names
+  them:
+
+  | Part | Label | Shown as |
+  |---|---|---|
+  | datacenter | `datacenter` | `IDC: eu-1` |
+  | project | `project` | `Project: shop` |
+  | environment | `environment`, else `env` | `Env: prod` |
+  | cluster | `cluster` | `Cluster: prod-1` |
+  | host | `host` | `Host: web1.example.org` |
+  | namespace | `namespace` | `Namespace/web` |
+  | object | `object` (e.g. `Service/www`), else the first Kubernetes label of `deployment`, `statefulset`, `daemonset`, `cronjob`, `job_name`, `persistentvolumeclaim`, `horizontalpodautoscaler`, `pod`, `node` | `Deployment/api` |
+
+  A Kubernetes alert reads `Env: prod · Cluster: prod-1 · Namespace/web ·
+  Deployment/api`; an alert about a server `IDC: eu-1 · Project: shop · Env:
+  stage · Host: web1.example.org`. It comes first because a reader does not
+  always see the channel: the Teams activity feed shows the card without
+  it. Rules that know more than their labels say - where a probed site
+  runs, the Service behind it - set these labels themselves (`labels` of
+  the rule, or of the probe target).
 - **Times** are written as the Adaptive Card functions `{{TIME()}}` and
   `{{DATE()}}`: Teams shows them in the reader's time zone. The date is
   added when the alert started more than 12 hours before the card.
 - **Facts** are the alert's labels (for a group, the labels all its alerts
   share), except those shown elsewhere or of no use to a reader:
-  `alertname`, `severity`, `cluster`, `prometheus`, `endpoint`,
-  `container`, `service`. The full set is under "All labels and
+  `alertname`, `severity`, the labels of the where line, `prometheus`,
+  `endpoint`, `container`, `service`. The full set is under "All labels and
   annotations".
 - **A group** shows its alerts as a table. The first column is the first of
   the labels `instance`, `pod`, `name`, `job`, `container` that the alerts
@@ -262,7 +286,8 @@ node-1:9100           20:34
   icon - so the card still reads there.
 
 To change what the card shows, copy the template: the lists of hidden
-labels and row labels are at its top.
+labels, where-line labels and their titles, Kubernetes object labels and
+row labels are at its top.
 
 ### Troubleshooting in the rule
 

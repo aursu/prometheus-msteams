@@ -270,6 +270,10 @@ func Test_defaultCard_firingAlert(t *testing.T) {
 	if findByID(card, "details-body") == nil {
 		t.Error("no \"All labels and annotations\" section")
 	}
+	// One alert: nothing to list.
+	if findByID(card, "alerts-body") != nil || len(findElements(card, "Table")) != 0 {
+		t.Error("a single alert has an alerts section")
+	}
 
 	if got, want := actionTitles(card), []string{"Alertmanager", "Silence", "Runbook", "Graph"}; !slices.Equal(got, want) {
 		t.Errorf("buttons = %q, want %q", got, want)
@@ -418,9 +422,18 @@ func Test_defaultCard_groupSharedSummary(t *testing.T) {
 		t.Error("namespace is shown as a fact as well as in the where line")
 	}
 
-	table := findElements(card, "Table")
-	if len(table) != 1 {
-		t.Fatalf("want one table, got %d", len(table))
+	// The alerts: a table in a collapsed section titled by the label that
+	// tells them apart and their count.
+	if !slices.Contains(texts, "Affected pods (3)") {
+		t.Errorf("no section \"Affected pods (3)\" in %q", texts)
+	}
+	section := findByID(card, "alerts-body")
+	if section == nil || section["isVisible"] != false {
+		t.Fatalf("alerts section body = %v, want a hidden element", section)
+	}
+	table := findElements(section, "Table")
+	if len(table) != 1 || len(findElements(card, "Table")) != 1 {
+		t.Fatalf("want one table, in the alerts section; got %d there", len(table))
 	}
 	tableTexts := textsOf(table[0])
 	want := []string{"pod", "since",
@@ -464,6 +477,47 @@ func Test_defaultCard_groupOwnSummaries(t *testing.T) {
 	}
 	if !slices.Contains(textsOf(body), "For the first alert of the group: https://a.example.org/") {
 		t.Errorf("no note naming the first alert in %q", textsOf(body))
+	}
+}
+
+// The alerts section of a group: kept on a resolved card, titled "Alerts"
+// when no row label tells the alerts apart, and without a hint column - its
+// count is in the title, which a phone shows whole.
+func Test_defaultCard_alertsSection(t *testing.T) {
+	labels := func(reason string) template.KV {
+		return template.KV{"alertname": "KubeJobFailed", "severity": "warning", "namespace": "web", "reason": reason}
+	}
+	tests := []struct {
+		name, status, title string
+	}{
+		{"firing, no row label", "firing", "Alerts (2)"},
+		{"resolved keeps the list", "resolved", "Alerts (2)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			card := renderDefault(t, group(tt.status,
+				alertAt(tt.status, 5, labels("BackoffLimitExceeded"), nil),
+				alertAt(tt.status, 6, labels("DeadlineExceeded"), nil)))
+			if findByID(card, "alerts-body") == nil {
+				t.Fatal("no alerts section")
+			}
+			// The section's heading line: arrow, icon, title - no hint.
+			var heading map[string]any
+			for _, cs := range findElements(card, "ColumnSet") {
+				if sa, _ := cs["selectAction"].(map[string]any); sa != nil && sa["title"] == tt.title {
+					heading = cs
+				}
+			}
+			if heading == nil {
+				t.Fatalf("no section titled %q in %q", tt.title, textsOf(card))
+			}
+			if n := len(heading["columns"].([]any)); n != 3 {
+				t.Errorf("heading has %d columns, want 3 (no hint column)", n)
+			}
+			if got := len(textsOf(findByID(card, "alerts-body"))); got != 2*3 {
+				t.Errorf("table has %d texts, want a header and two rows of two", got)
+			}
+		})
 	}
 }
 

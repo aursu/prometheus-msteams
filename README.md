@@ -232,9 +232,7 @@ Memory usage above 90%                        summary, once
 Swap is in use on the node.                   description
 Started 20:34 · firing for 10 min             resolved: Lasted 13 min · 20:34 – 20:47
 job        node-exporter                      the labels worth reading
-instance              since                   a group: one row per alert, scrolls
-node-1:9100           20:34
-...
+> Affected instances (3)                      a group, collapsed: one row per alert
 > Troubleshooting       access · check · mitigate     collapsed
 > All labels and annotations                 8        collapsed
 [Alertmanager] [Silence] [Runbook] [Graph]
@@ -273,10 +271,12 @@ node-1:9100           20:34
   `alertname`, `severity`, the labels of the where line, `prometheus`,
   `endpoint`, `container`, `service`. The full set is under "All labels and
   annotations".
-- **A group** shows its alerts as a table. The first column is the first of
-  the labels `instance`, `pod`, `name`, `job`, `container` that the alerts
-  do not all share; when the alerts have different summaries, each row
-  shows its own.
+- **A group** lists its alerts in a collapsed section, as a table that
+  scrolls past about six rows - also on a resolved card. The first column
+  is the first of the labels `instance`, `pod`, `name`, `job`, `container`
+  that the alerts do not all share, and it names the section with the
+  count: "Affected pods (12)"; "Alerts (2)" when none of them differs. When
+  the alerts have different summaries, each row shows its own.
 - **Buttons**: Alertmanager (the group's alerts), Silence (a new silence
   with the alert's labels, for a group the group's), Runbook (annotation
   `runbook_url`, or `runbook`), Graph (the rule's expression in Prometheus).

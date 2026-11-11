@@ -10,7 +10,7 @@
     description
     Started 20:34 · firing for 10 min          resolved: Lasted 13 min · 20:56 – 21:09
     facts                                      the labels worth reading
-    table                                      a group: one row per alert, scrolls
+    > Affected pods (N)                        a group, collapsed: one row per alert
     > Troubleshooting                          collapsed: access, check, mitigate
     > All labels and annotations               collapsed
     [Alertmanager] [Silence] [Runbook] [Graph]
@@ -191,6 +191,14 @@
 
 {{- /* ---- A group: one table row per alert ------------------------------- */ -}}
 
+{{- /* Collapsed sections, in the order they appear: id, title, icon, a
+       hint shown on the collapsed line (may be empty), and their items. */ -}}
+{{- $sections := list -}}
+
+{{- /* The group's alerts: a table in a collapsed section titled by what
+       tells them apart and how many there are - "Affected pods (12)" - so
+       a large group does not push everything else down. The count is in
+       the title, not the hint, because a phone leaves the hint out. */ -}}
 {{- if not $one -}}
   {{- $rows := list (dict "type" "TableRow" "cells" (list
         (dict "type" "TableCell" "items" (list (dict "type" "TextBlock" "text" ($rowKey | default "alert") "weight" "Bolder")))
@@ -209,10 +217,13 @@
           (dict "type" "TableCell" "items" $what)
           (dict "type" "TableCell" "items" (list (dict "type" "TextBlock" "text" $since "isSubtle" true "horizontalAlignment" "Right"))))) -}}
   {{- end -}}
+  {{- $sectionTitle := printf "Alerts (%d)" $n -}}
+  {{- with $rowKey }}{{ $sectionTitle = printf "Affected %ss (%d)" . $n }}{{ end -}}
   {{- /* maxHeight (Teams): about six rows show, the rest scroll. */ -}}
-  {{- $body = append $body (dict "type" "Container" "maxHeight" "220px" "items" (list
-        (dict "type" "Table" "firstRowAsHeader" true "showGridLines" false
-              "columns" (list (dict "width" 3) (dict "width" 1)) "rows" $rows))) -}}
+  {{- $sections = append $sections (dict "id" "alerts" "title" $sectionTitle "icon" "Table" "hint" "" "items" (list
+        (dict "type" "Container" "maxHeight" "220px" "items" (list
+            (dict "type" "Table" "firstRowAsHeader" true "showGridLines" false
+                  "columns" (list (dict "width" 3) (dict "width" 1)) "rows" $rows))))) -}}
 {{- end -}}
 
 {{- /* Alerts of the group not in the card: left out to keep it within Teams'
@@ -225,7 +236,7 @@
   {{- $body = append $body (dict "type" "TextBlock" "text" $line "size" "Small" "isSubtle" true "wrap" true) -}}
 {{- end -}}
 
-{{- /* ---- Collapsed sections (firing only) ------------------------------- */ -}}
+{{- /* ---- Collapsed sections for a firing group --------------------------- */ -}}
 
 {{- /* Troubleshooting, from the rule's annotations: access (where to look,
        how to get in), check (shell commands that confirm the problem),
@@ -243,9 +254,6 @@
 {{- $runbook := index .CommonAnnotations "runbook_url" | default (index $first.Annotations "runbook_url")
       | default (index .CommonAnnotations "runbook") | default (index $first.Annotations "runbook") | trim -}}
 
-{{- /* Each section: id, title, icon, a hint shown on the collapsed line,
-       and its items. */ -}}
-{{- $sections := list -}}
 {{- if and $firing $steps -}}
   {{- $items := list -}}
   {{- if $fromFirst -}}
@@ -290,24 +298,27 @@
        Selecting the heading (Action.ToggleVisibility) shows or hides the
        body and swaps the arrow: two arrows, one of them hidden. The hint on
        the right is left out on a narrow card (a phone held upright), so the
-       title keeps its room. */ -}}
+       title keeps its room; a section without a hint has no hint column. */ -}}
 {{- range $sections -}}
   {{- $bodyId := printf "%s-body" .id -}}
   {{- $closedId := printf "%s-closed" .id -}}
   {{- $openId := printf "%s-open" .id -}}
+  {{- $columns := list
+        (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "items" (list
+            (dict "type" "TextBlock" "id" $closedId "text" "▸")
+            (dict "type" "TextBlock" "id" $openId "text" "▾" "isVisible" false "spacing" "None")))
+        (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "items" (list
+            (dict "type" "Icon" "name" .icon "size" "xSmall" "fallback" "drop")))
+        (dict "type" "Column" "width" "stretch" "verticalContentAlignment" "Center" "items" (list
+            (dict "type" "TextBlock" "text" .title "weight" "Bolder"))) -}}
+  {{- with .hint -}}
+    {{- $columns = append $columns (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "targetWidth" "atLeast:Standard" "items" (list
+          (dict "type" "TextBlock" "text" . "size" "Small" "isSubtle" true))) -}}
+  {{- end -}}
   {{- $body = append $body (dict "type" "Container" "showBorder" true "roundedCorners" true "spacing" "Medium" "items" (list
         (dict "type" "ColumnSet"
               "selectAction" (dict "type" "Action.ToggleVisibility" "title" .title "targetElements" (list $bodyId $closedId $openId))
-              "columns" (list
-                  (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "items" (list
-                      (dict "type" "TextBlock" "id" $closedId "text" "▸")
-                      (dict "type" "TextBlock" "id" $openId "text" "▾" "isVisible" false "spacing" "None")))
-                  (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "items" (list
-                      (dict "type" "Icon" "name" .icon "size" "xSmall" "fallback" "drop")))
-                  (dict "type" "Column" "width" "stretch" "verticalContentAlignment" "Center" "items" (list
-                      (dict "type" "TextBlock" "text" .title "weight" "Bolder")))
-                  (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "targetWidth" "atLeast:Standard" "items" (list
-                      (dict "type" "TextBlock" "text" .hint "size" "Small" "isSubtle" true)))))
+              "columns" $columns)
         (dict "type" "Container" "id" $bodyId "isVisible" false "items" .items))) -}}
 {{- end -}}
 

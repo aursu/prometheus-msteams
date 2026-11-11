@@ -549,6 +549,90 @@ func Test_defaultCard_noExternalURL(t *testing.T) {
 	}
 }
 
+// The dashboard_url and alert_url annotations: the Dashboard and Alert rule
+// buttons, first, also on a resolved card. A group gets only the links its
+// alerts share; a dashboard they do not share is linked from each row.
+func Test_defaultCard_links(t *testing.T) {
+	const ruleURL = "https://grafana.example.org/alerting/list?search=EndpointDown"
+	dashboard := func(name string) string { return "https://grafana.example.org/d/site?var-target=" + name }
+	alert := func(status, name string, ann template.KV) template.Alert {
+		ann = maps.Clone(ann)
+		ann["summary"] = "the site fails"
+		return alertAt(status, 5, endpointLabels(name, "https://"+name+"/"), ann)
+	}
+	tests := []struct {
+		name    string
+		msg     webhook.Message
+		buttons []string
+		urls    map[string]string
+		rows    []string // the table's first-column texts, for a group
+	}{
+		{
+			name: "one alert",
+			msg: group("firing", alert("firing", "www.example.org",
+				template.KV{"dashboard_url": " " + dashboard("www") + "\n", "alert_url": ruleURL, "runbook_url": "https://runbooks.example.org/x"})),
+			buttons: []string{"Dashboard", "Alert rule", "Alertmanager", "Silence", "Runbook", "Graph"},
+			urls:    map[string]string{"Dashboard": dashboard("www"), "Alert rule": ruleURL},
+		},
+		{
+			name: "resolved keeps the links",
+			msg: group("resolved", alert("resolved", "www.example.org",
+				template.KV{"dashboard_url": dashboard("www"), "alert_url": ruleURL})),
+			buttons: []string{"Dashboard", "Alert rule", "Graph"},
+			urls:    map[string]string{"Dashboard": dashboard("www"), "Alert rule": ruleURL},
+		},
+		{
+			name: "group, own dashboards: linked from the rows",
+			msg: group("firing",
+				alert("firing", "a.example.org", template.KV{"dashboard_url": dashboard("a"), "alert_url": ruleURL}),
+				alert("firing", "b.example.org", template.KV{"dashboard_url": dashboard("b"), "alert_url": ruleURL})),
+			buttons: []string{"Alert rule", "Alertmanager", "Silence", "Graph"},
+			urls:    map[string]string{"Alert rule": ruleURL},
+			rows: []string{
+				"[https://a.example.org/](" + dashboard("a") + ")",
+				"[https://b.example.org/](" + dashboard("b") + ")"},
+		},
+		{
+			name: "group, shared dashboard: the button, plain rows",
+			msg: group("firing",
+				alert("firing", "a.example.org", template.KV{"dashboard_url": dashboard("all")}),
+				alert("firing", "b.example.org", template.KV{"dashboard_url": dashboard("all")})),
+			buttons: []string{"Dashboard", "Alertmanager", "Silence", "Graph"},
+			urls:    map[string]string{"Dashboard": dashboard("all")},
+			rows:    []string{"https://a.example.org/", "https://b.example.org/"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			card := renderDefault(t, tt.msg)
+			if got := actionTitles(card); !slices.Equal(got, tt.buttons) {
+				t.Errorf("buttons = %q, want %q", got, tt.buttons)
+			}
+			for title, want := range tt.urls {
+				if got := actionURL(card, title); got != want {
+					t.Errorf("%s URL = %q, want %q", title, got, want)
+				}
+			}
+			if tt.rows != nil {
+				table := textsOf(findElements(card, "Table")[0])
+				for _, want := range tt.rows {
+					if !slices.Contains(table, want) {
+						t.Errorf("table has no row %q: %q", want, table)
+					}
+				}
+			}
+			// Shown as buttons, so not repeated under "All labels and annotations".
+			if details := findByID(card, "details-body"); details != nil {
+				for title := range factsOf(details) {
+					if strings.Contains(title, "url") {
+						t.Errorf("%q is listed under all labels and annotations", title)
+					}
+				}
+			}
+		})
+	}
+}
+
 // Without troubleshooting annotations there is no Troubleshooting section;
 // a warning alert gets the warning look.
 func Test_defaultCard_noTroubleshooting(t *testing.T) {

@@ -24,8 +24,8 @@ The main differences:
   or version. The templates in this repository are checked in the tests
   against the Adaptive Card 1.5 schema and the Teams-only elements.
 - **A card made for reading under pressure**: the alert name first, the
-  group as a table, troubleshooting steps from the rule, buttons to
-  Alertmanager, a silence, the runbook and the graph (see
+  group as a table, troubleshooting steps from the rule, buttons to the
+  dashboard, the rule, Alertmanager, a silence, the runbook and the graph (see
   [The default card](#the-default-card)).
 - Maintained dependencies only: the standard library for HTTP routing and
   logging, the Prometheus client for metrics, sprig v3 for template
@@ -235,7 +235,7 @@ job        node-exporter                      the labels worth reading
 > Affected instances (3)                      a group, collapsed: one row per alert
 > Troubleshooting       access · check · mitigate     collapsed
 > All labels and annotations                 8        collapsed
-[Alertmanager] [Silence] [Runbook] [Graph]
+[Dashboard] [Alert rule] [Alertmanager] [Silence] [Runbook] [Graph]
 ```
 
 - **Colours**: red for critical, orange for warning, blue otherwise, green
@@ -277,10 +277,15 @@ job        node-exporter                      the labels worth reading
   that the alerts do not all share, and it names the section with the
   count: "Affected pods (12)"; "Alerts (2)" when none of them differs. When
   the alerts have different summaries, each row shows its own.
-- **Buttons**: Alertmanager (the group's alerts), Silence (a new silence
-  with the alert's labels, for a group the group's), Runbook (annotation
-  `runbook_url`, or `runbook`), Graph (the rule's expression in Prometheus).
-  A resolved card keeps only Graph.
+- **Buttons**: Dashboard (annotation `dashboard_url`: the dashboard of what
+  the alert is about), Alert rule (annotation `alert_url`: where the rule
+  is defined, e.g. in Grafana), Alertmanager (the group's alerts), Silence
+  (a new silence with the alert's labels, for a group the group's), Runbook
+  (annotation `runbook_url`, or `runbook`), Graph (the rule's expression in
+  Prometheus). A group gets only the links its alerts share; when each
+  alert has its own `dashboard_url` (one per probed site, say), the table
+  links each row to it instead. A resolved card keeps Dashboard, Alert rule
+  and Graph.
 - **Teams mobile** does not render every element (icons, badges, code
   blocks); each of them carries a fallback - plain text, or nothing for the
   icon - so the card still reads there.

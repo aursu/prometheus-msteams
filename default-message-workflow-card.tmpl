@@ -13,7 +13,7 @@
     > Affected pods (N)                        a group, collapsed: one row per alert
     > Troubleshooting                          collapsed: access, check, mitigate
     > All labels and annotations               collapsed
-    [Alertmanager] [Silence] [Runbook] [Graph]
+    [Dashboard] [Alert rule] [Alertmanager] [Silence] [Runbook] [Graph]
 
   How it is written: the card is built as data - dict (a JSON object), list
   (a JSON array), append, set - and written once, at the end, with toJson.
@@ -53,7 +53,8 @@
 {{- $rowLabels := stringSlice "instance" "pod" "name" "job" "container" -}}
 {{- /* Annotations shown in their own place, so not repeated under "All
        labels and annotations". */ -}}
-{{- $shownAnnotations := stringSlice "summary" "description" "access" "check" "mitigate" "runbook_url" "runbook" -}}
+{{- $shownAnnotations := stringSlice "summary" "description" "access" "check" "mitigate" "runbook_url" "runbook"
+      "dashboard_url" "alert_url" -}}
 {{- /* The Adaptive Card time functions take RFC 3339 times. */ -}}
 {{- $rfc3339 := "2006-01-02T15:04:05Z07:00" -}}
 
@@ -200,12 +201,18 @@
        a large group does not push everything else down. The count is in
        the title, not the hint, because a phone leaves the hint out. */ -}}
 {{- if not $one -}}
+  {{- /* A dashboard the alerts do not share is linked from each row. */ -}}
+  {{- $sharedDashboard := index .CommonAnnotations "dashboard_url" -}}
   {{- $rows := list (dict "type" "TableRow" "cells" (list
         (dict "type" "TableCell" "items" (list (dict "type" "TextBlock" "text" ($rowKey | default "alert") "weight" "Bolder")))
         (dict "type" "TableCell" "items" (list (dict "type" "TextBlock" "text" "since" "weight" "Bolder" "horizontalAlignment" "Right"))))) -}}
   {{- range .Alerts -}}
     {{- $what := list -}}
-    {{- if $rowKey }}{{ $what = append $what (dict "type" "TextBlock" "text" (index .Labels $rowKey | mdEscape) "fontType" "Monospace" "wrap" true) }}{{ end -}}
+    {{- if $rowKey -}}
+      {{- $rowText := index .Labels $rowKey | mdEscape -}}
+      {{- if not $sharedDashboard }}{{ with index .Annotations "dashboard_url" | trim }}{{ $rowText = printf "[%s](%s)" $rowText . }}{{ end }}{{ end -}}
+      {{- $what = append $what (dict "type" "TextBlock" "text" $rowText "fontType" "Monospace" "wrap" true) -}}
+    {{- end -}}
     {{- /* Each alert's own summary, when the group has none in common. */ -}}
     {{- if not $summary -}}
       {{- with index .Annotations "summary" }}{{ $what = append $what (dict "type" "TextBlock" "text" (mdEscape .) "wrap" true "isSubtle" true "spacing" "None") }}{{ end -}}
@@ -324,11 +331,20 @@
 
 {{- /* ---- Buttons -------------------------------------------------------- */ -}}
 
-{{- /* Alertmanager: the group's alerts. Silence: a new silence with the
-       matchers filled in - the alert's labels, for a group the group's.
-       Runbook: the rule's runbook_url. Graph: the rule's expression in
-       Prometheus. A resolved group keeps only Graph. */ -}}
+{{- /* Dashboard and Alert rule: the rule's dashboard_url and alert_url
+       annotations - the dashboard of what the alert is about, and the rule
+       where it is defined. For a group, only the links its alerts share:
+       one alert's link would be wrong for the others, so the table links
+       each alert's own dashboard instead. Alertmanager: the group's alerts.
+       Silence: a new silence with the matchers filled in - the alert's
+       labels, for a group the group's. Runbook: the rule's runbook_url.
+       Graph: the rule's expression in Prometheus. A resolved group keeps
+       Dashboard, Alert rule and Graph: what happened, not what to do. */ -}}
+{{- $links := .CommonAnnotations -}}
+{{- if $one }}{{ $links = $first.Annotations }}{{ end -}}
 {{- $actions := list -}}
+{{- with index $links "dashboard_url" | trim }}{{ $actions = append $actions (dict "type" "Action.OpenUrl" "title" "Dashboard" "iconUrl" "icon:Board" "url" .) }}{{ end -}}
+{{- with index $links "alert_url" | trim }}{{ $actions = append $actions (dict "type" "Action.OpenUrl" "title" "Alert rule" "iconUrl" "icon:Alert" "url" .) }}{{ end -}}
 {{- if and $firing .ExternalURL -}}
   {{- $silence := $groupLabels -}}
   {{- if $one }}{{ $silence = $first.Labels }}{{ end -}}

@@ -1,6 +1,7 @@
 package card
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -143,7 +144,32 @@ func Test_labelMatchers(t *testing.T) {
 	}
 }
 
-// Both functions are available in templates, also with Alertmanager's own
+// urlComponent: a space is %20, never "+" - the part after "#" of a link
+// does not read "+" as a space - and a "+" of the value is %2B.
+func Test_urlComponent(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{name: "space", in: `{a="x", b="y"}`, want: `%7Ba%3D%22x%22%2C%20b%3D%22y%22%7D`},
+		{name: "plus stays a plus", in: "1+1", want: "1%2B1"},
+		{name: "unreserved unchanged", in: "a-b_c.d~e", want: "a-b_c.d~e"},
+		{name: "reserved escaped", in: "a/b?c&d#e", want: "a%2Fb%3Fc%26d%23e"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := urlComponent(tt.in)
+			if got != tt.want {
+				t.Errorf("urlComponent(%q) = %s, want %s", tt.in, got, tt.want)
+			}
+			// Read back as a browser reads the part after "#".
+			if back, err := url.PathUnescape(got); err != nil || back != tt.in {
+				t.Errorf("read back = %q (%v), want %q", back, err, tt.in)
+			}
+		})
+	}
+}
+
+// The functions are available in templates, also with Alertmanager's own
 // label type (template.KV) as the argument.
 func Test_escapeFuncsInTemplates(t *testing.T) {
 	tmpl, err := ParseTemplateFile(writeTemplate(t, `{}`))
@@ -152,12 +178,12 @@ func Test_escapeFuncsInTemplates(t *testing.T) {
 	}
 	data := map[string]any{"Labels": template.KV{"alertname": "a_b", "job": `x"y`}}
 
-	got, err := tmpl.ExecuteTextString(`{{ .Labels.alertname | mdEscape | toJson }} {{ labelMatchers .Labels | urlquery }}`, data)
+	got, err := tmpl.ExecuteTextString(`{{ .Labels.alertname | mdEscape | toJson }} {{ labelMatchers .Labels | urlComponent }}`, data)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// toJson doubles the backslash: in JSON, \\ stands for one \.
-	want := `"a\\_b" %7Balertname%3D%22a_b%22%2C+job%3D%22x%5C%22y%22%7D`
+	want := `"a\\_b" %7Balertname%3D%22a_b%22%2C%20job%3D%22x%5C%22y%22%7D`
 	if got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}

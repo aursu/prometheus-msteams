@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -200,7 +201,7 @@ func ParseTemplateFile(f string) (*template.Template, error) {
 //     functions Helm charts use, except env and expandenv
 //   - toYaml and fromYaml, as in Helm
 //   - counter: {{ $c := counter }}{{ call $c }} gives 0, 1, 2, ...
-//   - mdEscape, labelMatchers and shortDuration, see below
+//   - mdEscape, labelMatchers, urlComponent and shortDuration, see below
 //   - now and since, as in Alertmanager and sprig, but on this package's
 //     clock, so that tests can fix the time
 //
@@ -209,7 +210,7 @@ func ParseTemplateFile(f string) (*template.Template, error) {
 //
 // Escaping belongs where a value is used, because each place needs its
 // own: a card text needs mdEscape and then toJson, a link only toJson (or
-// urlquery for a part of it). For example
+// urlComponent for a part of it). For example
 //
 //	"text": {{ .CommonAnnotations.summary | mdEscape | toJson }},
 //	"url": {{ .CommonAnnotations.runbook | toJson }}
@@ -236,6 +237,7 @@ func extraFuncs() map[string]any {
 	}
 	funcs["mdEscape"] = mdEscape
 	funcs["labelMatchers"] = labelMatchers
+	funcs["urlComponent"] = urlComponent
 	funcs["shortDuration"] = shortDuration
 	// Function literals that call clock when the template runs, not when
 	// the map is built: a test that replaces clock is seen by both.
@@ -291,6 +293,17 @@ func mdEscape(s string) string {
 	return markdownEscaper.Replace(s)
 }
 
+// urlComponent escapes s for any part of a URL, as JavaScript's
+// encodeURIComponent does: a space becomes %20. urlquery writes a space as
+// "+", which only a query string reads back as a space; the Alertmanager
+// web interface reads its filter from the part after "#", where "+" stays
+// "+" - {alertname="A", cluster="b"} would become the matchers
+// alertname="A" and +cluster="b", and match nothing. A "+" in s is escaped
+// as %2B by both.
+func urlComponent(s string) string {
+	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+}
+
 // labelMatchers writes labels as an Alertmanager filter, the form the
 // Alertmanager web interface takes in its "filter" parameter:
 //
@@ -300,7 +313,7 @@ func mdEscape(s string) string {
 // with Go's string quoting (strconv.Quote), which escapes quotes,
 // backslashes and line breaks as Alertmanager expects. A name that is not a
 // classic Prometheus label name is quoted too. In a URL, pass the result
-// through urlquery.
+// through urlComponent.
 func labelMatchers(labels map[string]string) string {
 	// maps.Keys gives the names in random order (Go maps have none);
 	// slices.Sorted collects and sorts them.

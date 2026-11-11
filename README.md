@@ -372,6 +372,10 @@ Functions available in templates:
   shows a value as it is (`high_memory_load`, not italics)
 - `labelMatchers`: labels as an Alertmanager filter,
   `{alertname="HighLoad", severity="warning"}`, for links to Alertmanager
+- `urlComponent`: escapes a part of a link as JavaScript's
+  `encodeURIComponent` does, a space as `%20`. Use it, not `urlquery`, for
+  Alertmanager's filter: it is read from the part after `#`, where the `+`
+  that `urlquery` writes for a space stays a `+`
 - `shortDuration`: a duration to the minute, `10 min`, `2 h 5 min`, `3 d 4 h`
 - `now` and `since`, as in Alertmanager: `{{ since .StartsAt | shortDuration }}`
 
@@ -380,7 +384,7 @@ Escape each label or annotation value where the template writes it:
 ```
 "text":  {{ .CommonAnnotations.summary | mdEscape | toJson }},
 "url":   {{ .CommonAnnotations.runbook | toJson }},
-"url":   {{ printf "%s/#/alerts?filter=%s" .ExternalURL (labelMatchers .CommonLabels | urlquery) | toJson }}
+"url":   {{ printf "%s/#/alerts?filter=%s" .ExternalURL (labelMatchers .CommonLabels | urlComponent) | toJson }}
 ```
 
 `toJson` writes the value as a JSON string, quotes included, so that

@@ -238,7 +238,7 @@
 {{- if .TruncatedAlerts -}}
   {{- $line := printf "%d more alerts not shown." .TruncatedAlerts -}}
   {{- with .ExternalURL -}}
-    {{- $line = printf "%s [Open the group in Alertmanager](%s/#/alerts?silenced=true&inhibited=true&active=true&filter=%s)" $line . (labelMatchers $groupLabels | urlquery) -}}
+    {{- $line = printf "%s [Open the group in Alertmanager](%s/#/alerts?silenced=true&inhibited=true&active=true&filter=%s)" $line . (labelMatchers $groupLabels | urlComponent) -}}
   {{- end -}}
   {{- $body = append $body (dict "type" "TextBlock" "text" $line "size" "Small" "isSubtle" true "wrap" true) -}}
 {{- end -}}
@@ -349,9 +349,9 @@
   {{- $silence := $groupLabels -}}
   {{- if $one }}{{ $silence = $first.Labels }}{{ end -}}
   {{- $actions = append $actions (dict "type" "Action.OpenUrl" "title" "Alertmanager" "iconUrl" "icon:Open"
-        "url" (printf "%s/#/alerts?filter=%s" .ExternalURL (labelMatchers $groupLabels | urlquery))) -}}
+        "url" (printf "%s/#/alerts?filter=%s" .ExternalURL (labelMatchers $groupLabels | urlComponent))) -}}
   {{- $actions = append $actions (dict "type" "Action.OpenUrl" "title" "Silence" "iconUrl" "icon:AlertSnooze"
-        "url" (printf "%s/#/silences/new?filter=%s" .ExternalURL (labelMatchers $silence | urlquery))) -}}
+        "url" (printf "%s/#/silences/new?filter=%s" .ExternalURL (labelMatchers $silence | urlComponent))) -}}
 {{- end -}}
 {{- if and $firing $runbook }}{{ $actions = append $actions (dict "type" "Action.OpenUrl" "title" "Runbook" "iconUrl" "icon:BookOpen" "url" $runbook) }}{{ end -}}
 {{- with $first.GeneratorURL }}{{ $actions = append $actions (dict "type" "Action.OpenUrl" "title" "Graph" "iconUrl" "icon:DataTrending" "url" .) }}{{ end -}}

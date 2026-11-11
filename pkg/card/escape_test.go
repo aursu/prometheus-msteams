@@ -20,7 +20,7 @@ var (
 		"alertname": "high_memory_load",
 		"severity":  "critical",
 		"job":       `node "exporter"`,
-		"note":      "line1\nline2 *x* [y](z) <b>",
+		"note":      "line1\nline2 *x* [y](z) <b> 1+1",
 	}
 	nastyAnnotations = template.KV{
 		"summary":          `disk "C:\" 95%_full`,
@@ -105,7 +105,13 @@ func Test_defaultTemplate_escapesValues(t *testing.T) {
 			t.Errorf("%s URL = %q, want one on the external URL", title, u)
 		}
 		_, filter, _ := strings.Cut(u, "filter=")
-		if got, err := url.QueryUnescape(filter); err != nil || got != labelMatchers(labels) {
+		// The filter is in the part after "#": a browser reads it back
+		// with decodeURIComponent, for which "+" is a "+", not a space -
+		// as url.PathUnescape, not url.QueryUnescape.
+		if strings.Contains(filter, "+") {
+			t.Errorf("%s filter = %q has a \"+\", which Alertmanager reads as part of a label name", title, filter)
+		}
+		if got, err := url.PathUnescape(filter); err != nil || got != labelMatchers(labels) {
 			t.Errorf("%s filter = %q (%v), want %q", title, got, err, labelMatchers(labels))
 		}
 	}

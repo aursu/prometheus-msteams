@@ -5,11 +5,11 @@
 
     [icon] Title ×N                            heading: what fired, how many
            Cluster: prod · Namespace/web · Deployment/api   where: from labels
-           FIRING  critical  N alerts  AlertName   badges: status, severity,
-                                               count; the alert's own name
+           FIRING  critical  N alerts          badges: status, severity, count
     summary                                    once for the group
     description
     Started 20:34 · firing for 10 min          resolved: Lasted 13 min · 20:56 – 21:09
+    alertname: AlertName                       when the title reads differently
     facts                                      the labels worth reading
     > Affected pods (N)                        a group, collapsed: one row per alert
     > Troubleshooting                          collapsed: access, check, mitigate
@@ -160,7 +160,7 @@
        the one its alerts share), else the alert name as words -
        "KubeAPIErrorBudgetBurn" as "Kube API Error Budget Burn". The alert
        name itself, which Alertmanager and silences know the alert by, goes
-       after the badges when it reads differently. */ -}}
+       under the time line when it reads differently. */ -}}
 {{- $titleAnnotation := index .CommonAnnotations "title" -}}
 {{- if $one }}{{ $titleAnnotation = index $first.Annotations "title" }}{{ end -}}
 {{- $headline := trim $titleAnnotation | default (splitWords $alertname) -}}
@@ -174,10 +174,6 @@
   {{- $badges = append $badges (dict "type" "Column" "width" "auto" "spacing" "Small" "items" (list
         (dict "type" "Badge" "text" .text "style" .style "appearance" .appearance "size" "Medium"
               "fallback" (dict "type" "TextBlock" "text" (mdEscape .text) "size" "Small" "weight" "Bolder" "color" $look.color)))) -}}
-{{- end -}}
-{{- if ne $headline $alertname -}}
-  {{- $badges = append $badges (dict "type" "Column" "width" "auto" "spacing" "Small" "verticalContentAlignment" "Center" "items" (list
-        (dict "type" "TextBlock" "text" (mdEscape $alertname) "size" "Small" "fontType" "Monospace" "isSubtle" true "wrap" true))) -}}
 {{- end -}}
 
 {{- $heading := list (dict "type" "TextBlock" "text" $title "size" "Large" "weight" "Bolder" "wrap" true) -}}
@@ -193,6 +189,9 @@
 {{- with $summary }}{{ $body = append $body (dict "type" "TextBlock" "text" (mdEscape .) "wrap" true) }}{{ end -}}
 {{- with $description }}{{ $body = append $body (dict "type" "TextBlock" "text" (mdEscape .) "wrap" true "isSubtle" true "spacing" "Small") }}{{ end -}}
 {{- $body = append $body (dict "type" "TextBlock" "text" $when "size" "Small" "isSubtle" true "wrap" true "spacing" "Small") -}}
+{{- if ne $headline $alertname -}}
+  {{- $body = append $body (dict "type" "TextBlock" "text" (printf "alertname: %s" (mdEscape $alertname)) "size" "Small" "isSubtle" true "wrap" true "spacing" "None") -}}
+{{- end -}}
 
 {{- /* Facts: for one alert its labels, for a group the labels its alerts
        share - minus the hidden ones and the ones the "where" line shows.

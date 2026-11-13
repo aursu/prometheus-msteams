@@ -217,9 +217,9 @@ func Test_defaultCard_firingAlert(t *testing.T) {
 
 	texts := textsOf(card)
 	for _, want := range []string{
-		"Endpoint Down", // the title: the alert name as words
-		"EndpointDown",  // and the name itself, after the badges
-		"Cluster: prod", // where: only the cluster is known
+		"Endpoint Down",           // the title: the alert name as words
+		"alertname: EndpointDown", // and the name itself, under the time line
+		"Cluster: prod",           // where: only the cluster is known
 		"the site fails",
 		"Started {{TIME(2026-11-09T20:34:00Z)}} · firing for 10 min",
 	} {
@@ -648,7 +648,7 @@ func Test_defaultCard_noTroubleshooting(t *testing.T) {
 }
 
 // The title: the rule's title annotation, else the alert name as words; the
-// alert name itself after the badges when it reads differently.
+// alert name itself under the time line when it reads differently.
 func Test_defaultCard_title(t *testing.T) {
 	labels := func(alertname, name string) template.KV {
 		return template.KV{"alertname": alertname, "severity": "warning", "cluster": "prod", "name": name}
@@ -657,7 +657,7 @@ func Test_defaultCard_title(t *testing.T) {
 		name      string
 		msg       webhook.Message
 		title     string
-		alertname string // shown after the badges; "" = not shown
+		alertname string // shown under the time line; "" = not shown
 	}{
 		{
 			name:      "no title annotation: the alert name as words",
@@ -709,19 +709,28 @@ func Test_defaultCard_title(t *testing.T) {
 			if got := items[0].(map[string]any)["text"]; got != tt.title {
 				t.Errorf("title = %q, want %q", got, tt.title)
 			}
-			// The badges row: the Badge columns, then the alert name.
+			// The badges row holds badges only.
 			badgeRow := items[len(items)-1].(map[string]any)
-			var after []string
 			for _, col := range badgeRow["columns"].([]any) {
 				if len(findElements(col.(map[string]any), "Badge")) == 0 {
-					after = append(after, textsOf(col.(map[string]any))...)
+					t.Errorf("badges row has a column without a badge: %v", col)
 				}
 			}
-			if tt.alertname == "" && len(after) != 0 {
-				t.Errorf("after the badges: %q, want nothing", after)
+			// Under the time line: "alertname: <name>", or nothing more.
+			body := card["body"].([]any)
+			var under string
+			for i, el := range body {
+				text, _ := el.(map[string]any)["text"].(string)
+				if (strings.HasPrefix(text, "Started ") || strings.HasPrefix(text, "Lasted ")) && i+1 < len(body) {
+					under, _ = body[i+1].(map[string]any)["text"].(string)
+				}
 			}
-			if tt.alertname != "" && !slices.Equal(after, []string{tt.alertname}) {
-				t.Errorf("after the badges: %q, want %q", after, tt.alertname)
+			named := strings.HasPrefix(under, "alertname: ")
+			if tt.alertname == "" && named {
+				t.Errorf("under the time line: %q, want no alert name", under)
+			}
+			if tt.alertname != "" && under != "alertname: "+tt.alertname {
+				t.Errorf("under the time line: %q, want %q", under, "alertname: "+tt.alertname)
 			}
 			// fallbackText is plain text: the title without the count and without
 			// markdown escapes.

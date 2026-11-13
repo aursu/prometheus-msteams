@@ -91,7 +91,8 @@ func Test_templatedCard_Convert(t *testing.T) {
 	}{
 		{
 			// The default template, one firing alert: heading, summary,
-			// description, time, facts, and the collapsed labels section.
+			// description, time, alert name, facts, and the collapsed labels
+			// section.
 			name:         "default template layout",
 			templateFile: "../../default-message-workflow-card.tmpl",
 			checkFn: func(t *testing.T, got json.RawMessage) {
@@ -103,13 +104,13 @@ func Test_templatedCard_Convert(t *testing.T) {
 						types = append(types, typ)
 					}
 				}
-				wantTypes := []string{"ColumnSet", testTextBlockType, testTextBlockType, testTextBlockType, "FactSet", "Container"}
+				wantTypes := []string{"ColumnSet", testTextBlockType, testTextBlockType, testTextBlockType, testTextBlockType, "FactSet", "Container"}
 				if diff := cmp.Diff(wantTypes, types); diff != "" {
 					t.Fatalf("body element types mismatch (-want +got):\n%s", diff)
 				}
-				facts, ok := body[4]["facts"].([]interface{})
+				facts, ok := body[5]["facts"].([]interface{})
 				if !ok || len(facts) == 0 {
-					t.Fatalf("FactSet element missing facts, got: %v", body[4])
+					t.Fatalf("FactSet element missing facts, got: %v", body[5])
 				}
 			},
 		},

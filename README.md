@@ -227,10 +227,11 @@ one card per notification (one alert group):
 ```
 [icon] High Memory Load ×3                    the title; ×N for a group
        Env: prod · Cluster: prod-1 · Namespace/web    where it happened
-       FIRING  critical  3 alerts  HighMemoryLoad     status, severity, count, alert name
+       FIRING  critical  3 alerts             status, severity, count
 Memory usage above 90%                        summary, once
 Swap is in use on the node.                   description
 Started 20:34 · firing for 10 min             resolved: Lasted 13 min · 20:34 – 20:47
+alertname: HighMemoryLoad                     the alert name, when the title differs
 job        node-exporter                      the labels worth reading
 > Affected instances (3)                      a group, collapsed: one row per alert
 > Troubleshooting       access · check · mitigate     collapsed
@@ -243,8 +244,9 @@ job        node-exporter                      the labels worth reading
 - **Title**: the rule's `title` annotation (for a group, the one all its
   alerts share) - a few words a reader understands, `Kubernetes API is
   slow`. Without it, the alert name as words: `KubeAPIErrorBudgetBurn`
-  reads `Kube API Error Budget Burn`. The alert name itself follows the
-  badges, as Alertmanager and silences know it.
+  reads `Kube API Error Budget Burn`. The alert name itself, as
+  Alertmanager and silences know it, is under the time line:
+  `alertname: KubeAPIErrorBudgetBurn`.
 - **Where** - the line under the title - says what the alert is
   about, general to specific, from these labels when the alert has them
   (for a group, when all its alerts share them). Context reads

@@ -71,7 +71,7 @@ func Test_defaultTemplate_escapesValues(t *testing.T) {
 	// Texts: the value, markdown escaped.
 	texts := textsOf(card)
 	for _, want := range []string{
-		mdEscape(nastyLabels["alertname"]),
+		"alertname: " + mdEscape(nastyLabels["alertname"]),
 		mdEscape(nastyAnnotations["summary"]),
 		mdEscape(nastyAnnotations["description"]),
 	} {

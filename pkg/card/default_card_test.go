@@ -217,7 +217,8 @@ func Test_defaultCard_firingAlert(t *testing.T) {
 
 	texts := textsOf(card)
 	for _, want := range []string{
-		"EndpointDown",
+		"Endpoint Down", // the title: the alert name as words
+		"EndpointDown",  // and the name itself, after the badges
 		"Cluster: prod", // where: only the cluster is known
 		"the site fails",
 		"Started {{TIME(2026-11-09T20:34:00Z)}} · firing for 10 min",
@@ -400,7 +401,7 @@ func Test_defaultCard_groupSharedSummary(t *testing.T) {
 		alertAt("firing", 10, labels("web-3"), ann)))
 
 	texts := textsOf(card)
-	if !slices.Contains(texts, "KubePodNotReady ×3") {
+	if !slices.Contains(texts, "Kube Pod Not Ready ×3") {
 		t.Errorf("no title with the count in %q", texts)
 	}
 	if !slices.Contains(badgesOf(card), "3 alerts") {
@@ -530,7 +531,7 @@ func Test_defaultCard_truncatedGroup(t *testing.T) {
 	msg.TruncatedAlerts = 8
 	card := renderDefault(t, msg)
 	texts := strings.Join(textsOf(card), "\n")
-	if !strings.Contains(texts, "EndpointDown ×10") {
+	if !strings.Contains(texts, "Endpoint Down ×10") {
 		t.Errorf("title does not count the left-out alerts: %q", texts)
 	}
 	if !strings.Contains(texts, "8 more alerts not shown. [Open the group in Alertmanager](https://alerts.example.org/#/alerts?") {
@@ -643,5 +644,94 @@ func Test_defaultCard_noTroubleshooting(t *testing.T) {
 	}
 	if icon := findElements(card, "Icon")[0]; icon["name"] != "Warning" || icon["color"] != "Warning" {
 		t.Errorf("icon = %v, want Warning in Warning", icon)
+	}
+}
+
+// The title: the rule's title annotation, else the alert name as words; the
+// alert name itself after the badges when it reads differently.
+func Test_defaultCard_title(t *testing.T) {
+	labels := func(alertname, name string) template.KV {
+		return template.KV{"alertname": alertname, "severity": "warning", "cluster": "prod", "name": name}
+	}
+	tests := []struct {
+		name      string
+		msg       webhook.Message
+		title     string
+		alertname string // shown after the badges; "" = not shown
+	}{
+		{
+			name:      "no title annotation: the alert name as words",
+			msg:       group("firing", alertAt("firing", 5, labels("KubeAPIErrorBudgetBurn", "a"), template.KV{"summary": "s"})),
+			title:     "Kube API Error Budget Burn",
+			alertname: "KubeAPIErrorBudgetBurn",
+		},
+		{
+			name: "title annotation, trimmed",
+			msg: group("firing", alertAt("firing", 5, labels("KubeAPIErrorBudgetBurn", "a"),
+				template.KV{"summary": "s", "title": " Kubernetes API is *slow*\n"})),
+			title:     `Kubernetes API is \*slow\*`,
+			alertname: "KubeAPIErrorBudgetBurn",
+		},
+		{
+			name:  "one word: no second name",
+			msg:   group("firing", alertAt("firing", 5, labels("Watchdog", "a"), template.KV{"summary": "s"})),
+			title: "Watchdog",
+		},
+		{
+			name: "group, shared title",
+			msg: group("firing",
+				alertAt("firing", 5, labels("EndpointDown", "a"), template.KV{"title": "Site is not reachable"}),
+				alertAt("firing", 5, labels("EndpointDown", "b"), template.KV{"title": "Site is not reachable"})),
+			title:     "Site is not reachable ×2",
+			alertname: "EndpointDown",
+		},
+		{
+			name: "group, titles differ: the alert name as words",
+			msg: group("firing",
+				alertAt("firing", 5, labels("EndpointDown", "a"), template.KV{"title": "Site a is down"}),
+				alertAt("firing", 5, labels("EndpointDown", "b"), template.KV{"title": "Site b is down"})),
+			title:     "Endpoint Down ×2",
+			alertname: "EndpointDown",
+		},
+		{
+			name: "resolved",
+			msg: group("resolved", alertAt("resolved", 5, labels("NodeFilesystemSpaceFillingUp", "a"),
+				template.KV{"title": "Disk is filling up"})),
+			title:     "Disk is filling up",
+			alertname: "NodeFilesystemSpaceFillingUp",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			card := renderDefault(t, tt.msg)
+			heading := card["body"].([]any)[0].(map[string]any)["columns"].([]any)[1].(map[string]any)
+			items := heading["items"].([]any)
+			if got := items[0].(map[string]any)["text"]; got != tt.title {
+				t.Errorf("title = %q, want %q", got, tt.title)
+			}
+			// The badges row: the Badge columns, then the alert name.
+			badgeRow := items[len(items)-1].(map[string]any)
+			var after []string
+			for _, col := range badgeRow["columns"].([]any) {
+				if len(findElements(col.(map[string]any), "Badge")) == 0 {
+					after = append(after, textsOf(col.(map[string]any))...)
+				}
+			}
+			if tt.alertname == "" && len(after) != 0 {
+				t.Errorf("after the badges: %q, want nothing", after)
+			}
+			if tt.alertname != "" && !slices.Equal(after, []string{tt.alertname}) {
+				t.Errorf("after the badges: %q, want %q", after, tt.alertname)
+			}
+			// fallbackText is plain text: the title without the count and without
+			// markdown escapes.
+			plain := strings.ReplaceAll(strings.TrimSuffix(tt.title, " ×2"), `\`, "")
+			if fb, _ := card["fallbackText"].(string); !strings.HasPrefix(fb, "[FIRING] "+plain) && !strings.HasPrefix(fb, "[RESOLVED] "+plain) {
+				t.Errorf("fallbackText %q does not start with the title", fb)
+			}
+			if _, ok := factsOf(card)["title"]; ok {
+				t.Error("the title annotation is repeated under All labels and annotations")
+			}
+		})
 	}
 }

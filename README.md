@@ -225,9 +225,9 @@ receivers:
 one card per notification (one alert group):
 
 ```
-[icon] HighMemoryLoad ×3                      the alert name; ×N for a group
+[icon] High Memory Load ×3                    the title; ×N for a group
        Env: prod · Cluster: prod-1 · Namespace/web    where it happened
-       FIRING  critical  3 alerts             status, severity, count
+       FIRING  critical  3 alerts  HighMemoryLoad     status, severity, count, alert name
 Memory usage above 90%                        summary, once
 Swap is in use on the node.                   description
 Started 20:34 · firing for 10 min             resolved: Lasted 13 min · 20:34 – 20:47
@@ -240,7 +240,12 @@ job        node-exporter                      the labels worth reading
 
 - **Colours**: red for critical, orange for warning, blue otherwise, green
   when resolved.
-- **Where** - the line under the alert name - says what the alert is
+- **Title**: the rule's `title` annotation (for a group, the one all its
+  alerts share) - a few words a reader understands, `Kubernetes API is
+  slow`. Without it, the alert name as words: `KubeAPIErrorBudgetBurn`
+  reads `Kube API Error Budget Burn`. The alert name itself follows the
+  badges, as Alertmanager and silences know it.
+- **Where** - the line under the title - says what the alert is
   about, general to specific, from these labels when the alert has them
   (for a group, when all its alerts share them). Context reads
   `Title: value`; Kubernetes objects read `Kind/name`, as kubectl names
@@ -377,6 +382,8 @@ Functions available in templates:
   Alertmanager's filter: it is read from the part after `#`, where the `+`
   that `urlquery` writes for a space stays a `+`
 - `shortDuration`: a duration to the minute, `10 min`, `2 h 5 min`, `3 d 4 h`
+- `splitWords`: a joined name as words, `KubeAPIErrorBudgetBurn` as
+  `Kube API Error Budget Burn`, `node_down` as `node down`
 - `now` and `since`, as in Alertmanager: `{{ since .StartsAt | shortDuration }}`
 
 Escape each label or annotation value where the template writes it:

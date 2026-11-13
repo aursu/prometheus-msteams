@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Masterminds/sprig/v3"
 	"github.com/prometheus/alertmanager/notify/webhook"
@@ -201,7 +202,8 @@ func ParseTemplateFile(f string) (*template.Template, error) {
 //     functions Helm charts use, except env and expandenv
 //   - toYaml and fromYaml, as in Helm
 //   - counter: {{ $c := counter }}{{ call $c }} gives 0, 1, 2, ...
-//   - mdEscape, labelMatchers, urlComponent and shortDuration, see below
+//   - mdEscape, labelMatchers, urlComponent, shortDuration and splitWords,
+//     see below
 //   - now and since, as in Alertmanager and sprig, but on this package's
 //     clock, so that tests can fix the time
 //
@@ -239,6 +241,7 @@ func extraFuncs() map[string]any {
 	funcs["labelMatchers"] = labelMatchers
 	funcs["urlComponent"] = urlComponent
 	funcs["shortDuration"] = shortDuration
+	funcs["splitWords"] = splitWords
 	// Function literals that call clock when the template runs, not when
 	// the map is built: a test that replaces clock is seen by both.
 	funcs["now"] = func() time.Time { return clock() }
@@ -302,6 +305,33 @@ func mdEscape(s string) string {
 // as %2B by both.
 func urlComponent(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+}
+
+// splitWords writes a name made of joined words as words, for people to
+// read: "KubeAPIErrorBudgetBurn" becomes "Kube API Error Budget Burn",
+// "node_down" "node down". A word starts at a capital after a small letter
+// or a digit, and at the last capital of a run of capitals followed by a
+// small letter (API|Error); "_" and "-" separate words. Digits stay with the
+// letters before them: "RelayV13Test" is "Relay V13 Test", "K8sNode" is
+// "K8s Node".
+func splitWords(s string) string {
+	r := []rune(s)
+	var b strings.Builder
+	for i, c := range r {
+		if c == '_' || c == '-' {
+			b.WriteRune(' ')
+			continue
+		}
+		if i > 0 && unicode.IsUpper(c) {
+			p := r[i-1]
+			nextLower := i+1 < len(r) && unicode.IsLower(r[i+1])
+			if unicode.IsLower(p) || unicode.IsDigit(p) || (unicode.IsUpper(p) && nextLower) {
+				b.WriteRune(' ')
+			}
+		}
+		b.WriteRune(c)
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // labelMatchers writes labels as an Alertmanager filter, the form the

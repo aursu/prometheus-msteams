@@ -188,3 +188,26 @@ func Test_escapeFuncsInTemplates(t *testing.T) {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }
+
+// splitWords: a joined name as words, for a card's title.
+func Test_splitWords(t *testing.T) {
+	tests := map[string]string{
+		"KubeAPIErrorBudgetBurn":             "Kube API Error Budget Burn",
+		"NodeFilesystemSpaceFillingUp":       "Node Filesystem Space Filling Up",
+		"AlertmanagerRelayV13Test":           "Alertmanager Relay V13 Test",
+		"etcdHighNumberOfFailedGRPCRequests": "etcd High Number Of Failed GRPC Requests",
+		"PrometheusTSDBReloadsFailing":       "Prometheus TSDB Reloads Failing",
+		"HTTP2Down":                          "HTTP2 Down",
+		"K8sNodeDown":                        "K8s Node Down",
+		"node_down":                          "node down",
+		"backup-missing__now":                "backup missing now",
+		"Watchdog":                           "Watchdog",
+		"CPU":                                "CPU",
+		"":                                   "",
+	}
+	for in, want := range tests {
+		if got := splitWords(in); got != want {
+			t.Errorf("splitWords(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

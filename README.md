@@ -175,6 +175,10 @@ connectors_with_custom_templates:
   webhook_url_file: /etc/teams/compact
   template_file: ./templates/compact.tmpl
   escape_underscores: false  # as -auto-escape-underscores; see Card templates
+# Names the contacts, never @mentions them (a test channel).
+- request_path: /test
+  webhook_url_file: /etc/teams/test
+  mention_severities: []
 
 # The URL written into this file, with the template given by
 # -template-file. Keep this for files that are themselves secret.
@@ -188,7 +192,8 @@ connectors:
 
 Per entry of `connectors_with_custom_templates`: `request_path`, the URL
 as `webhook_url_file` (a file holding it) or `webhook_url` (the URL itself),
-and optionally `template_file` and `escape_underscores`.
+and optionally `template_file`, `escape_underscores` and `mention_severities`
+(see [Owners and @mentions](#owners-and-mentions)).
 
 URL files are read once, at startup: after a URL changes, restart the
 service. Spaces and line breaks around the URL are dropped.
@@ -350,6 +355,11 @@ nobody.
 
 The label is set where the alert is defined: in the rule's `labels`, on a
 probe target, or for all alerts of a Prometheus by alert relabeling.
+
+One channel can mention differently: `mention_severities` on an entry of
+`connectors_with_custom_templates` replaces the file's for that request path
+(`[]` never mentions - a test channel names the people without waking
+them). In the Helm chart: `channels[].mentionSeverities`.
 
 ### Troubleshooting in the rule
 

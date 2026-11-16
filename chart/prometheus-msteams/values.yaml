@@ -10,6 +10,10 @@ channels: []
 #   # Optional: -auto-escape-underscores for this channel; only for
 #   # templates that do not escape values themselves.
 #   escapeUnderscores: false
+#   # Optional: which severities @mention the contacts on this channel,
+#   # instead of the contacts' mention_severities; [] never mentions (a
+#   # test channel). Left out: the contacts' value.
+#   mentionSeverities: []
 
 # The Secret with the Workflow URLs, one key per channel. Required. It is
 # not created by this chart: the URLs are credentials and do not belong in

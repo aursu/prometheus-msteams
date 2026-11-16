@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -12,6 +13,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/prometheus/alertmanager/notify/webhook"
+	"github.com/prometheus/alertmanager/template"
 
 	"github.com/aursu/prometheus-msteams/pkg/card"
 	"github.com/aursu/prometheus-msteams/pkg/testutils"
@@ -284,5 +289,68 @@ func Test_routeBuilder_build_noValidation(t *testing.T) {
 	b.validateURLs = false
 	if _, err := b.build(PromTeamsConfig{Connectors: []map[string]string{{"/a": "http://example.org/hook"}}}); err != nil {
 		t.Errorf("build() error = %v, want none", err)
+	}
+}
+
+// mention_severities of a path overrides the contacts file's for that path
+// only: the same critical alert is a mention on one channel and names only
+// on the other.
+func Test_routeBuilder_build_mentionSeverities(t *testing.T) {
+	contactsFile := filepath.Join(t.TempDir(), "contacts.yaml")
+	body := "default: platform\ngroups: {platform: {primary: [{name: Jane Doe, id: jane@example.org}]}}\n"
+	if err := os.WriteFile(contactsFile, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contacts, err := card.LoadContacts(contactsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	cards := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		cards[r.URL.Path] = string(b)
+		mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(srv.Close)
+
+	b := newTestBuilder(t)
+	b.validateURLs = false
+	b.contacts = contacts
+	b.defaultTemplate, err = card.ParseTemplateFile(defaultTemplateFile, contacts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	never := []string{}
+	routes, err := b.build(PromTeamsConfig{ConnectorsWithCustomTemplates: []ConnectorWithCustomTemplate{
+		{RequestPath: "/critical", WebhookURL: srv.URL + "/critical"},
+		{RequestPath: "/test", WebhookURL: srv.URL + "/test", MentionSeverities: &never},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := webhook.Message{Data: &template.Data{
+		Status: "firing",
+		Alerts: template.Alerts{{Status: "firing", StartsAt: time.Now(),
+			Labels: template.KV{"alertname": "SiteDown", "severity": "critical"}}},
+		GroupLabels:  template.KV{"alertname": "SiteDown"},
+		CommonLabels: template.KV{"alertname": "SiteDown", "severity": "critical"},
+	}}
+	for _, r := range routes {
+		if _, err := r.Service.Post(context.Background(), msg); err != nil {
+			t.Fatalf("route %s: %v", r.RequestPath, err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if c := cards["/critical"]; !strings.Contains(c, `"entities"`) {
+		t.Errorf("/critical: no mention in the card: %s", c)
+	}
+	if c := cards["/test"]; strings.Contains(c, `"entities"`) || !strings.Contains(c, "contacts: Jane Doe (primary)") {
+		t.Errorf("/test: want the name without a mention: %s", c)
 	}
 }

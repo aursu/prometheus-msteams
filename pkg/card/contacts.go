@@ -210,3 +210,15 @@ func (c *Contacts) group(value string) (ContactGroup, bool) {
 	g, ok := c.Groups[c.Default]
 	return g, ok && c.Default != ""
 }
+
+// WithMentionSeverities returns a copy of c that mentions the given
+// severities ([] never), for one channel that differs from the file - a test
+// channel nobody must be woken by. A nil c stays nil.
+func (c *Contacts) WithMentionSeverities(severities []string) *Contacts {
+	if c == nil {
+		return nil
+	}
+	copied := *c
+	copied.MentionSeverities = slices.Clone(severities)
+	return &copied
+}

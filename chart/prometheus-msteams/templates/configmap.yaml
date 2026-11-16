@@ -23,6 +23,9 @@ data:
       {{- if .escapeUnderscores }}
       escape_underscores: true
       {{- end }}
+      {{- if hasKey . "mentionSeverities" }}
+      mention_severities: {{ .mentionSeverities | toJson }}
+      {{- end }}
     {{- end }}
   {{- with .Values.contacts }}
   contacts.yaml: |

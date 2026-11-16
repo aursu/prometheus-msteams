@@ -42,13 +42,18 @@ type PromTeamsConfig struct {
 // ConnectorWithCustomTemplate is one request path with its Teams Workflow:
 // the URL inline (webhook_url) or in a file (webhook_url_file, e.g. a
 // mounted Secret), and optionally its own template (template_file; the
-// default template otherwise).
+// default template otherwise) and its own mention_severities (the contacts
+// file's otherwise).
 type ConnectorWithCustomTemplate struct {
 	RequestPath       string `yaml:"request_path"`
 	TemplateFile      string `yaml:"template_file"`
 	WebhookURL        string `yaml:"webhook_url"`
 	WebhookURLFile    string `yaml:"webhook_url_file"`
 	EscapeUnderscores bool   `yaml:"escape_underscores"`
+	// MentionSeverities overrides the contacts file's mention_severities for
+	// this path: [] never mentions (a channel nobody must be woken by), left
+	// out the file's value. A pointer, so that "left out" and [] differ.
+	MentionSeverities *[]string `yaml:"mention_severities"`
 }
 
 // parseFlags reads the command line into fs. Every flag can also be set by an

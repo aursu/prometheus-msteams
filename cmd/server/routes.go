@@ -70,6 +70,7 @@ func (b routeBuilder) build(tc PromTeamsConfig) ([]transport.Route, error) {
 // customRoute builds the route of one "connectors_with_custom_templates"
 // entry. The URL is given inline (webhook_url) or in a file
 // (webhook_url_file); without template_file the default template is used.
+// mention_severities, when given, replaces the contacts file's for this path.
 func (b routeBuilder) customRoute(c ConnectorWithCustomTemplate) (transport.Route, error) {
 	if c.RequestPath == "" {
 		return transport.Route{}, errors.New("one of the connectors_with_custom_templates has no request_path")
@@ -82,13 +83,22 @@ func (b routeBuilder) customRoute(c ConnectorWithCustomTemplate) (transport.Rout
 		return transport.Route{}, err
 	}
 
+	// The template is parsed with the contacts it names (see
+	// card.ParseTemplateFile), so a path with its own template or its own
+	// mention_severities gets a template of its own.
 	tmpl, file := b.defaultTemplate, b.defaultTemplateFile
-	if c.TemplateFile != "" {
-		tmpl, err = card.ParseTemplateFile(c.TemplateFile, b.contacts)
+	contacts := b.contacts
+	if c.MentionSeverities != nil {
+		contacts = contacts.WithMentionSeverities(*c.MentionSeverities)
+	}
+	if c.TemplateFile != "" || c.MentionSeverities != nil {
+		if c.TemplateFile != "" {
+			file = c.TemplateFile
+		}
+		tmpl, err = card.ParseTemplateFile(file, contacts)
 		if err != nil {
 			return transport.Route{}, fmt.Errorf("request path %s: %w", c.RequestPath, err)
 		}
-		file = c.TemplateFile
 	}
 	return b.route(c.RequestPath, webhookURL, b.converter(tmpl, file, c.EscapeUnderscores)), nil
 }

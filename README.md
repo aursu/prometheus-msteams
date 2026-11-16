@@ -232,8 +232,9 @@ Memory usage above 90%                        summary, once
 Swap is in use on the node.                   description
 Started 20:34 · firing for 10 min             resolved: Lasted 13 min · 20:34 – 20:47
 alertname: HighMemoryLoad                     the alert name, when the title differs
-Owner: @Ann Lee · Backup: @Jane Doe           who to call; @ when firing and critical
 job        node-exporter                      the labels worth reading
+owner      shop                               the contacts label, last
+contacts: @Ann Lee (primary), @Jane Doe (backup)   who to call; @ when firing and critical
 > Affected instances (3)                      a group, collapsed: one row per alert
 > Troubleshooting       access · check · mitigate     collapsed
 > All labels and annotations                 8        collapsed
@@ -328,7 +329,8 @@ groups:
 sign-in name; for some accounts it is not the e-mail address) or the
 Microsoft Entra object id. `name` is what the card shows.
 
-The card reads `Owner: Ann Lee · Backup: Jane Doe` under the time line.
+The label is the last of the facts, and under it the card reads
+`contacts: Ann Lee (primary), Jane Doe (backup)`.
 For a firing alert of a severity in `mention_severities` the names are
 @mentions: Teams notifies the people, and the Activity feed shows the
 card. A resolved card, and a warning, only name them. A group's people
@@ -427,7 +429,8 @@ Functions available in templates:
   `Kube API Error Budget Burn`, `node_down` as `node down`
 - `contactsFor`: `{{ with contactsFor .Alerts }}` gives the people of the
   contacts file for the group - `.Primary`, `.Backup` (each a list of
-  `.Name`, `.ID`) and `.Mention` - or nothing, see
+  `.Name`, `.ID`), `.Mention` and `.Label` (the label that names the
+  group) - or nothing, see
   [Owners and @mentions](#owners-and-mentions)
 - `now` and `since`, as in Alertmanager: `{{ since .StartsAt | shortDuration }}`
 

@@ -10,8 +10,8 @@
     description
     Started 20:34 · firing for 10 min          resolved: Lasted 13 min · 20:56 – 21:09
     alertname: AlertName                       when the title reads differently
-    Owner: @Jane Doe · Backup: @John Roe       from the contacts file; @ only critical
-    facts                                      the labels worth reading
+    facts                                      the labels worth reading, owner last
+    contacts: @Jane Doe (primary), @John Roe (backup)   from the contacts file; @ only critical
     > Affected pods (N)                        a group, collapsed: one row per alert
     > Troubleshooting                          collapsed: access, check, mitigate
     > All labels and annotations               collapsed
@@ -194,40 +194,46 @@
   {{- $body = append $body (dict "type" "TextBlock" "text" (printf "alertname: %s" (mdEscape $alertname)) "size" "Small" "isSubtle" true "wrap" true "spacing" "None") -}}
 {{- end -}}
 
-{{- /* Who: the people behind the alerts, from the contacts file (see
-       contactsFor): "Owner: A, B · Backup: C". For a firing alert of a
-       severity the file mentions they are @mentioned and Teams notifies
-       them; otherwise, a resolved card too, the names are plain text. A
-       mention is the text <at>Name</at> in the card plus an entry with the
-       same text in msteams.entities, which says who it is. */ -}}
+{{- /* Contacts: the people behind the alerts, from the contacts file (see
+       contactsFor), each with their role:
+         contacts: Jane Doe (primary), John Roe (backup)
+       For a firing alert of a severity the file mentions they are
+       @mentioned and Teams notifies them; otherwise, a resolved card too,
+       the names are plain text. A mention is the text <at>Name</at> in the
+       card plus an entry with the same text in msteams.entities, which says
+       who it is. $contactLabel is the label that names their group (owner):
+       the facts show it last, right above this line. */ -}}
 {{- $entities := list -}}
+{{- $contactsText := "" -}}
+{{- $contactLabel := "" -}}
 {{- with contactsFor .Alerts -}}
+  {{- $contactLabel = .Label -}}
   {{- $mention := .Mention -}}
   {{- $who := list -}}
-  {{- range $part := list (list "Owner" .Primary) (list "Backup" .Backup) -}}
-    {{- $names := list -}}
+  {{- range $part := list (list "primary" .Primary) (list "backup" .Backup) -}}
     {{- range index $part 1 -}}
+      {{- $name := mdEscape .Name -}}
       {{- if $mention -}}
-        {{- $tag := printf "<at>%s</at>" .Name -}}
-        {{- $names = append $names $tag -}}
-        {{- $entities = append $entities (dict "type" "mention" "text" $tag "mentioned" (dict "id" .ID "name" .Name)) -}}
-      {{- else -}}
-        {{- $names = append $names (mdEscape .Name) -}}
+        {{- $name = printf "<at>%s</at>" .Name -}}
+        {{- $entities = append $entities (dict "type" "mention" "text" $name "mentioned" (dict "id" .ID "name" .Name)) -}}
       {{- end -}}
+      {{- $who = append $who (printf "%s (%s)" $name (index $part 0)) -}}
     {{- end -}}
-    {{- with $names }}{{ $who = append $who (printf "%s: %s" (index $part 0) (join ", " .)) }}{{ end -}}
   {{- end -}}
-  {{- $body = append $body (dict "type" "TextBlock" "text" (join " · " $who) "wrap" true "spacing" "Small") -}}
+  {{- $contactsText = printf "contacts: %s" (join ", " $who) -}}
 {{- end -}}
 
 {{- /* Facts: for one alert its labels, for a group the labels its alerts
-       share - minus the hidden ones and the ones the "where" line shows.
-       KV.Remove returns a copy without the given names. */ -}}
+       share - minus the hidden ones and the ones the "where" line shows;
+       the contact label last. KV.Remove returns a copy without the given
+       names. */ -}}
 {{- $facts := list -}}
-{{- range $k, $v := ($at.Remove $hiddenLabels).Remove (stringSlice $objKey) -}}
+{{- range $k, $v := (($at.Remove $hiddenLabels).Remove (stringSlice $objKey)).Remove (stringSlice $contactLabel) -}}
   {{- $facts = append $facts (dict "title" (mdEscape $k) "value" (mdEscape $v)) -}}
 {{- end -}}
+{{- with $contactLabel }}{{ with index $at . }}{{ $facts = append $facts (dict "title" (mdEscape $contactLabel) "value" (mdEscape .)) }}{{ end }}{{ end -}}
 {{- if $facts }}{{ $body = append $body (dict "type" "FactSet" "facts" $facts) }}{{ end -}}
+{{- with $contactsText }}{{ $body = append $body (dict "type" "TextBlock" "text" . "wrap" true "spacing" "Small") }}{{ end -}}
 
 {{- /* ---- A group: one table row per alert ------------------------------- */ -}}
 

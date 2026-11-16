@@ -58,8 +58,10 @@ type Contacts struct {
 }
 
 // AlertContacts is what a card gets for its alert group: the people to name,
-// primary and backup, each person once, and whether to @mention them.
+// primary and backup, each person once, whether to @mention them, and the
+// alert label that names their group (the card shows it next to them).
 type AlertContacts struct {
+	Label   string
 	Mention bool
 	Primary []Person
 	Backup  []Person
@@ -134,7 +136,7 @@ func (c *Contacts) For(alerts template.Alerts) *AlertContacts {
 		from = alerts
 	}
 
-	var out AlertContacts
+	out := AlertContacts{Label: c.Label}
 	var backup []Person
 	seen := map[string]bool{}
 	for _, a := range from {

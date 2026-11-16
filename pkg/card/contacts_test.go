@@ -140,6 +140,9 @@ func TestContacts_For(t *testing.T) {
 			if got == nil {
 				t.Fatal("For = nil")
 			}
+			if got.Label != "owner" {
+				t.Errorf("Label = %q, want owner", got.Label)
+			}
 			if got.Mention != tt.mention {
 				t.Errorf("Mention = %v, want %v", got.Mention, tt.mention)
 			}
@@ -210,7 +213,7 @@ func entitiesOf(card map[string]any) map[string]string {
 func Test_defaultCard_contacts(t *testing.T) {
 	c := loadTestContacts(t)
 	labels := func(severity string) template.KV {
-		return template.KV{"alertname": "EndpointDown", "severity": severity, "owner": "platform"}
+		return template.KV{"alertname": "EndpointDown", "severity": severity, "owner": "platform", "zone": "a", "job": "blackbox"}
 	}
 	tests := []struct {
 		name     string
@@ -221,14 +224,14 @@ func Test_defaultCard_contacts(t *testing.T) {
 	}{
 		{"firing critical: @mentions", c,
 			group("firing", alertAt("firing", 5, labels("critical"), template.KV{"summary": "down"})),
-			"Owner: <at>Jane Doe</at> · Backup: <at>John Roe</at>",
+			"contacts: <at>Jane Doe</at> (primary), <at>John Roe</at> (backup)",
 			map[string]string{"<at>Jane Doe</at>": "jane@example.org", "<at>John Roe</at>": "john@example.org"}},
 		{"firing warning: names", c,
 			group("firing", alertAt("firing", 5, labels("warning"), template.KV{"summary": "down"})),
-			"Owner: Jane Doe · Backup: John Roe", map[string]string{}},
+			"contacts: Jane Doe (primary), John Roe (backup)", map[string]string{}},
 		{"resolved: names", c,
 			group("resolved", alertAt("resolved", 5, labels("critical"), template.KV{"summary": "down"})),
-			"Owner: Jane Doe · Backup: John Roe", map[string]string{}},
+			"contacts: Jane Doe (primary), John Roe (backup)", map[string]string{}},
 		{"no contacts file: no line", nil,
 			group("firing", alertAt("firing", 5, labels("critical"), template.KV{"summary": "down"})),
 			"", map[string]string{}},
@@ -238,7 +241,7 @@ func Test_defaultCard_contacts(t *testing.T) {
 			card := renderWithContacts(t, tt.contacts, tt.msg)
 			var line string
 			for _, text := range textsOf(card) {
-				if strings.HasPrefix(text, "Owner: ") {
+				if strings.HasPrefix(text, "contacts: ") {
 					line = text
 				}
 			}
@@ -247,6 +250,15 @@ func Test_defaultCard_contacts(t *testing.T) {
 			}
 			if got := entitiesOf(card); !maps.Equal(got, tt.entities) {
 				t.Errorf("entities = %v, want %v", got, tt.entities)
+			}
+			// With a contacts file the owner label is the last fact, right above
+			// the contacts line; without one it is an ordinary fact.
+			wantFacts := []string{"job", "zone", "owner"}
+			if tt.contacts == nil {
+				wantFacts = []string{"job", "owner", "zone"}
+			}
+			if got := summaryFactTitles(card); !slices.Equal(got, wantFacts) {
+				t.Errorf("facts = %v, want %v", got, wantFacts)
 			}
 		})
 	}

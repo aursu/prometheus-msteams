@@ -44,6 +44,9 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - -config-file=/etc/config/connectors.yaml
+            {{- if .Values.contacts }}
+            - -contacts-file=/etc/config/contacts.yaml
+            {{- end }}
             {{- with .Values.defaultTemplate }}
             - -template-file={{ include "promteams.templatePath" . }}
             {{- end }}

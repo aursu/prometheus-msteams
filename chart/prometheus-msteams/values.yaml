@@ -30,6 +30,17 @@ templates: {}
 # Empty: the default template built into the image.
 defaultTemplate: ""
 
+# The people to name on the cards - owner and backup - by the value of an
+# alert label, @mentioned when an alert fires as critical: the contacts file
+# of -contacts-file, written here as YAML. Format and behaviour: the project
+# README, "Owners and @mentions". Empty: nobody is named.
+contacts: {}
+#   default: platform
+#   groups:
+#     platform:
+#       primary: [{name: Jane Doe, id: jane@example.org}]
+#       backup:  [{name: John Roe, id: john@example.org}]
+
 # More command-line flags, e.g. -max-card-size=20000 or -debug.
 extraArgs: []
 

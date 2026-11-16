@@ -24,6 +24,10 @@ data:
       escape_underscores: true
       {{- end }}
     {{- end }}
+  {{- with .Values.contacts }}
+  contacts.yaml: |
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 {{- with .Values.templates }}
 ---
 apiVersion: v1

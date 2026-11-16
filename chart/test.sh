@@ -43,6 +43,9 @@ expect_contains 'escape_underscores: true' "escapeUnderscores"
 expect_contains 'compact.tmpl: |' "templates ConfigMap"
 expect_contains '- -template-file=/etc/templates/compact.tmpl' "defaultTemplate"
 expect_contains '- -max-card-size=20000' "extraArgs"
+expect_contains 'contacts.yaml: |' "contacts in the ConfigMap"
+expect_contains 'id: jane@example.org' "contacts content"
+expect_contains '- -contacts-file=/etc/config/contacts.yaml' "contacts flag"
 expect_contains 'secretName: teams-urls' "Secret volume"
 expect_contains 'defaultMode: 0440' "Secret file mode"
 expect_contains 'fsGroup: 65532' "fsGroup"
@@ -57,6 +60,7 @@ out=$(render --set urlSecret.name=s --set 'channels[0].path=/a' --set 'channels[
 printf '%s' "$out" | grep -q -- '-template-file' && fail "minimal: -template-file without defaultTemplate"
 printf '%s' "$out" | grep -q 'name: templates' && fail "minimal: templates volume without templates"
 printf '%s' "$out" | grep -q 'kind: ServiceMonitor' && fail "minimal: ServiceMonitor while disabled"
+printf '%s' "$out" | grep -q -- '-contacts-file' && fail "minimal: -contacts-file without contacts"
 
 expect_error "at least one channel" "no channels" --set urlSecret.name=s
 expect_error "urlSecret.name" "no Secret" --set 'channels[0].path=/a' --set 'channels[0].urlKey=a'

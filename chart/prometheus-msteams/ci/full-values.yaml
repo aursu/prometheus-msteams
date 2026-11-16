@@ -14,6 +14,12 @@ templates:
   compact: |
     {{ define "teams.card" }}{"type": "message"}{{ end }}
 defaultTemplate: compact
+contacts:
+  default: platform
+  groups:
+    platform:
+      primary: [{name: Jane Doe, id: jane@example.org}]
+      backup: [{name: John Roe, id: john@example.org}]
 extraArgs:
   - -max-card-size=20000
 serviceMonitor:

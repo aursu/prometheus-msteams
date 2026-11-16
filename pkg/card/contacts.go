@@ -24,9 +24,16 @@ import (
 //	  platform:
 //	    primary: [{name: Jane Doe, id: jane@example.com}]
 //	    backup:  [{name: John Roe, id: john@example.com}]
+//	  storage:
+//	    primary: [{name: Ann Lee, id: ann@example.com, mention: false, note: Storage team - contact personally}]
+//	    responders: platform
 //
 // id is what Teams knows the person by: the user principal name (the Teams
 // sign-in name) or the Microsoft Entra object id. name is what the card shows.
+// mention: false names a person without mentioning them - someone who does not
+// read the channel, reached another way; note is shown after their role.
+// responders names another group whose people react to the alert and are
+// mentioned instead: "responders: @Jane Doe, @John Roe".
 
 // defaultContactLabel is the alert label read when the file names none.
 const defaultContactLabel = "owner"
@@ -39,13 +46,25 @@ var defaultMentionSeverities = []string{"critical"}
 type Person struct {
 	Name string `yaml:"name"`
 	ID   string `yaml:"id"`
+	// Note is shown after the person's role: "(primary, <note>)".
+	Note string `yaml:"note"`
+	// Mention false: named, never mentioned. Left out: true. (A pointer,
+	// so that "left out" and "false" can be told apart.)
+	Mention *bool `yaml:"mention"`
 }
 
-// ContactGroup is the people behind one label value: who owns it (primary)
-// and who stands in for them (backup).
+// Mentionable reports whether the person may be @mentioned.
+func (p Person) Mentionable() bool {
+	return p.Mention == nil || *p.Mention
+}
+
+// ContactGroup is the people behind one label value: who owns it (primary),
+// who stands in for them (backup), and optionally the group whose people
+// react to its alerts (responders).
 type ContactGroup struct {
-	Primary []Person `yaml:"primary"`
-	Backup  []Person `yaml:"backup"`
+	Primary    []Person `yaml:"primary"`
+	Backup     []Person `yaml:"backup"`
+	Responders string   `yaml:"responders"`
 }
 
 // Contacts is the contacts file. A nil *Contacts is valid: no file, nobody
@@ -57,14 +76,16 @@ type Contacts struct {
 	Groups            map[string]ContactGroup `yaml:"groups"`
 }
 
-// AlertContacts is what a card gets for its alert group: the people to name,
-// primary and backup, each person once, whether to @mention them, and the
-// alert label that names their group (the card shows it next to them).
+// AlertContacts is what a card gets for its alert group: the people to name -
+// primary, backup and responders, each person once - whether to @mention
+// them (each person only if Mentionable), and the alert label that names
+// their group (the card shows it next to them).
 type AlertContacts struct {
-	Label   string
-	Mention bool
-	Primary []Person
-	Backup  []Person
+	Label      string
+	Mention    bool
+	Primary    []Person
+	Backup     []Person
+	Responders []Person
 }
 
 // LoadContacts reads and checks a contacts file. An unknown key is an error,
@@ -94,7 +115,9 @@ func LoadContacts(path string) (*Contacts, error) {
 }
 
 // validate checks that every group has someone in it, every person a name
-// and an id, and that the default group exists.
+// and an id, that the default group and every responders group exist, and
+// that a responders group has no responders of its own (they are not
+// followed further).
 func (c *Contacts) validate() error {
 	if len(c.Groups) == 0 {
 		return errors.New("no groups")
@@ -106,6 +129,15 @@ func (c *Contacts) validate() error {
 		for _, p := range slices.Concat(g.Primary, g.Backup) {
 			if p.Name == "" || p.ID == "" {
 				return fmt.Errorf("group %q: every person needs a name and an id", key)
+			}
+		}
+		if g.Responders != "" {
+			r, ok := c.Groups[g.Responders]
+			if !ok {
+				return fmt.Errorf("group %q: responders %q is not one of the groups", key, g.Responders)
+			}
+			if r.Responders != "" {
+				return fmt.Errorf("group %q: responders %q has responders of its own", key, g.Responders)
 			}
 		}
 	}
@@ -122,10 +154,10 @@ func (c *Contacts) validate() error {
 //
 // The people come from the firing alerts; a resolved group, which has none,
 // from all its alerts. Each alert's group is found by its label (else the
-// default group); a person named by several groups is named once, as
-// primary if any group has them as primary. Mention is true when one of the
-// firing alerts has a severity of mention_severities: a resolved card names
-// the people without notifying them again.
+// default group). A person is named once, in the first of primary, backup,
+// responders that any of the groups gives them. Mention is true when one of
+// the firing alerts has a severity of mention_severities: a resolved card
+// names the people without notifying them again.
 func (c *Contacts) For(alerts template.Alerts) *AlertContacts {
 	if c == nil {
 		return nil
@@ -137,8 +169,7 @@ func (c *Contacts) For(alerts template.Alerts) *AlertContacts {
 	}
 
 	out := AlertContacts{Label: c.Label}
-	var backup []Person
-	seen := map[string]bool{}
+	var primary, backup, responders []Person
 	for _, a := range from {
 		g, ok := c.group(a.Labels[c.Label])
 		if !ok {
@@ -147,21 +178,25 @@ func (c *Contacts) For(alerts template.Alerts) *AlertContacts {
 		if firing && slices.Contains(c.MentionSeverities, a.Labels["severity"]) {
 			out.Mention = true
 		}
-		for _, p := range g.Primary {
+		primary = append(primary, g.Primary...)
+		backup = append(backup, g.Backup...)
+		if r, ok := c.Groups[g.Responders]; ok && g.Responders != "" {
+			responders = slices.Concat(responders, r.Primary, r.Backup)
+		}
+	}
+	seen := map[string]bool{}
+	once := func(people []Person) []Person {
+		var kept []Person
+		for _, p := range people {
 			if !seen[p.ID] {
 				seen[p.ID] = true
-				out.Primary = append(out.Primary, p)
+				kept = append(kept, p)
 			}
 		}
-		backup = append(backup, g.Backup...)
+		return kept
 	}
-	for _, p := range backup {
-		if !seen[p.ID] {
-			seen[p.ID] = true
-			out.Backup = append(out.Backup, p)
-		}
-	}
-	if len(out.Primary)+len(out.Backup) == 0 {
+	out.Primary, out.Backup, out.Responders = once(primary), once(backup), once(responders)
+	if len(out.Primary)+len(out.Backup)+len(out.Responders) == 0 {
 		return nil
 	}
 	return &out

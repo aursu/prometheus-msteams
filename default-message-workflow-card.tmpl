@@ -195,11 +195,12 @@
 {{- end -}}
 
 {{- /* Contacts: the people behind the alerts, from the contacts file (see
-       contactsFor), each with their role:
+       contactsFor), each with their role and note, then the responders:
          contacts: Jane Doe (primary), John Roe (backup)
+         contacts: Ann Lee (primary, Storage - contact personally) · responders: Jane Doe, John Roe
        For a firing alert of a severity the file mentions they are
-       @mentioned and Teams notifies them; otherwise, a resolved card too,
-       the names are plain text. A mention is the text <at>Name</at> in the
+       @mentioned and Teams notifies them - except people with mention:
+       false; otherwise, a resolved card too, the names are plain text. A mention is the text <at>Name</at> in the
        card plus an entry with the same text in msteams.entities, which says
        who it is. $contactLabel is the label that names their group (owner):
        the facts show it last, right above this line. */ -}}
@@ -210,17 +211,28 @@
   {{- $contactLabel = .Label -}}
   {{- $mention := .Mention -}}
   {{- $who := list -}}
-  {{- range $part := list (list "primary" .Primary) (list "backup" .Backup) -}}
+  {{- $responders := list -}}
+  {{- range $part := list (list "primary" .Primary) (list "backup" .Backup) (list "" .Responders) -}}
+    {{- $role := index $part 0 -}}
     {{- range index $part 1 -}}
       {{- $name := mdEscape .Name -}}
-      {{- if $mention -}}
+      {{- if and $mention .Mentionable -}}
         {{- $name = printf "<at>%s</at>" .Name -}}
         {{- $entities = append $entities (dict "type" "mention" "text" $name "mentioned" (dict "id" .ID "name" .Name)) -}}
       {{- end -}}
-      {{- $who = append $who (printf "%s (%s)" $name (index $part 0)) -}}
+      {{- if $role -}}
+        {{- with .Note }}{{ $role = printf "%s, %s" $role (mdEscape .) }}{{ end -}}
+        {{- $who = append $who (printf "%s (%s)" $name $role) -}}
+        {{- $role = index $part 0 -}}
+      {{- else -}}
+        {{- $responders = append $responders $name -}}
+      {{- end -}}
     {{- end -}}
   {{- end -}}
-  {{- $contactsText = printf "contacts: %s" (join ", " $who) -}}
+  {{- $parts := list -}}
+  {{- with $who }}{{ $parts = append $parts (printf "contacts: %s" (join ", " .)) }}{{ end -}}
+  {{- with $responders }}{{ $parts = append $parts (printf "responders: %s" (join ", " .)) }}{{ end -}}
+  {{- $contactsText = join " · " $parts -}}
 {{- end -}}
 
 {{- /* Facts: for one alert its labels, for a group the labels its alerts

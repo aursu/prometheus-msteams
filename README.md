@@ -323,11 +323,20 @@ groups:
   shop:
     primary: [{name: Ann Lee, id: ann@example.org}]
     backup:  [{name: Jane Doe, id: jane@example.org}]
+  storage:                      # owned by people outside this channel
+    primary: [{name: Kim Park, id: kim@example.org, mention: false,
+               note: Storage team - contact personally}]
+    responders: platform        # whose people react, and are mentioned
 ```
 
 `id` is what Teams knows the person by: the user principal name (the Teams
 sign-in name; for some accounts it is not the e-mail address) or the
 Microsoft Entra object id. `name` is what the card shows.
+`mention: false` names a person without mentioning them - someone who does
+not read the channel and is reached another way; `note` follows their role.
+`responders` names another group whose people react to the alert: they are
+added as `responders: @Jane Doe, @John Roe` and mentioned instead. A
+responders group cannot have responders of its own.
 
 The label is the last of the facts, and under it the card reads
 `contacts: Ann Lee (primary), Jane Doe (backup)`.

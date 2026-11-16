@@ -24,6 +24,9 @@ groups:
   shop:
     primary: [{name: Ann Lee, id: ann@example.org}, {name: John Roe, id: john@example.org}]
     backup:  [{name: Jane Doe, id: jane@example.org}]
+  storage:
+    primary: [{name: Kim Park, id: kim@example.org, mention: false, note: Storage - contact personally}]
+    responders: platform
 `
 
 // writeContacts writes body to a contacts file and returns its path.
@@ -76,6 +79,8 @@ func TestLoadContacts_errors(t *testing.T) {
 		{"no id", "groups: {a: {primary: [{name: A}]}}\n", "name and an id"},
 		{"no name", "groups: {a: {backup: [{id: a@example.org}]}}\n", "name and an id"},
 		{"unknown default", "default: b\ngroups: {a: {primary: [{name: A, id: a}]}}\n", `default "b"`},
+		{"unknown responders", "groups: {a: {primary: [{name: A, id: a}], responders: b}}\n", `responders "b" is not`},
+		{"responders of responders", "groups: {a: {primary: [{name: A, id: a}], responders: b}, b: {primary: [{name: B, id: b}], responders: a}}\n", "of its own"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -112,27 +117,31 @@ func contactAlert(status, severity, owner string) template.Alert {
 func TestContacts_For(t *testing.T) {
 	c := loadTestContacts(t)
 	tests := []struct {
-		name            string
-		alerts          template.Alerts
-		mention         bool
-		primary, backup []string
+		name                        string
+		alerts                      template.Alerts
+		mention                     bool
+		primary, backup, responders []string
 	}{
 		{"firing critical: mentioned", template.Alerts{contactAlert("firing", "critical", "platform")},
-			true, []string{"Jane Doe"}, []string{"John Roe"}},
+			true, []string{"Jane Doe"}, []string{"John Roe"}, nil},
 		{"firing warning: named only", template.Alerts{contactAlert("firing", "warning", "platform")},
-			false, []string{"Jane Doe"}, []string{"John Roe"}},
+			false, []string{"Jane Doe"}, []string{"John Roe"}, nil},
 		{"resolved: named only", template.Alerts{contactAlert("resolved", "critical", "platform")},
-			false, []string{"Jane Doe"}, []string{"John Roe"}},
+			false, []string{"Jane Doe"}, []string{"John Roe"}, nil},
 		{"no label: the default group", template.Alerts{contactAlert("firing", "critical", "")},
-			true, []string{"Jane Doe"}, []string{"John Roe"}},
+			true, []string{"Jane Doe"}, []string{"John Roe"}, nil},
 		{"unknown value: the default group", template.Alerts{contactAlert("firing", "critical", "nobody")},
-			true, []string{"Jane Doe"}, []string{"John Roe"}},
+			true, []string{"Jane Doe"}, []string{"John Roe"}, nil},
 		{"two groups: each person once, primary wins",
 			template.Alerts{contactAlert("firing", "critical", "shop"), contactAlert("firing", "warning", "platform")},
-			true, []string{"Ann Lee", "John Roe", "Jane Doe"}, nil},
+			true, []string{"Ann Lee", "John Roe", "Jane Doe"}, nil, nil},
 		{"only the firing alerts count",
 			template.Alerts{contactAlert("resolved", "critical", "shop"), contactAlert("firing", "warning", "platform")},
-			false, []string{"Jane Doe"}, []string{"John Roe"}},
+			false, []string{"Jane Doe"}, []string{"John Roe"}, nil},
+		{"responders: named after the group's people", template.Alerts{contactAlert("firing", "critical", "storage")},
+			true, []string{"Kim Park"}, nil, []string{"Jane Doe", "John Roe"}},
+		{"responders who are named already: once", template.Alerts{contactAlert("firing", "critical", "storage"), contactAlert("firing", "critical", "platform")},
+			true, []string{"Kim Park", "Jane Doe"}, []string{"John Roe"}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,6 +160,9 @@ func TestContacts_For(t *testing.T) {
 			}
 			if !slices.Equal(names(got.Backup), tt.backup) {
 				t.Errorf("Backup = %v, want %v", names(got.Backup), tt.backup)
+			}
+			if !slices.Equal(names(got.Responders), tt.responders) {
+				t.Errorf("Responders = %v, want %v", names(got.Responders), tt.responders)
 			}
 		})
 	}
@@ -232,6 +244,10 @@ func Test_defaultCard_contacts(t *testing.T) {
 		{"resolved: names", c,
 			group("resolved", alertAt("resolved", 5, labels("critical"), template.KV{"summary": "down"})),
 			"contacts: Jane Doe (primary), John Roe (backup)", map[string]string{}},
+		{"responders: @mentioned, a person with mention false only named", c,
+			group("firing", alertAt("firing", 5, template.KV{"alertname": "EndpointDown", "severity": "critical", "owner": "storage", "zone": "a", "job": "blackbox"}, template.KV{"summary": "down"})),
+			"contacts: Kim Park (primary, Storage - contact personally) · responders: <at>Jane Doe</at>, <at>John Roe</at>",
+			map[string]string{"<at>Jane Doe</at>": "jane@example.org", "<at>John Roe</at>": "john@example.org"}},
 		{"no contacts file: no line", nil,
 			group("firing", alertAt("firing", 5, labels("critical"), template.KV{"summary": "down"})),
 			"", map[string]string{}},

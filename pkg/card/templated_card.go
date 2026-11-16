@@ -175,11 +175,12 @@ func jsonEscapeMessage(promAlert webhook.Message) webhook.Message {
 
 // ParseTemplateFile creates an Alertmanager template from the given file. The
 // template can use Alertmanager's own functions and those of extraFuncs.
-func ParseTemplateFile(f string) (*template.Template, error) {
+// contacts are the people its contactsFor function names; nil: nobody.
+func ParseTemplateFile(f string, contacts *Contacts) (*template.Template, error) {
 	// Alertmanager builds every template with template.DefaultFuncs, a
 	// package-level map; the extra functions are added to it.
 	funcs := template.DefaultFuncs
-	for k, v := range extraFuncs() {
+	for k, v := range extraFuncs(contacts) {
 		funcs[k] = v
 	}
 	template.DefaultFuncs = funcs
@@ -202,8 +203,8 @@ func ParseTemplateFile(f string) (*template.Template, error) {
 //     functions Helm charts use, except env and expandenv
 //   - toYaml and fromYaml, as in Helm
 //   - counter: {{ $c := counter }}{{ call $c }} gives 0, 1, 2, ...
-//   - mdEscape, labelMatchers, urlComponent, shortDuration and splitWords,
-//     see below
+//   - mdEscape, labelMatchers, urlComponent, shortDuration, splitWords and
+//     contactsFor, see below
 //   - now and since, as in Alertmanager and sprig, but on this package's
 //     clock, so that tests can fix the time
 //
@@ -219,7 +220,7 @@ func ParseTemplateFile(f string) (*template.Template, error) {
 //
 // (toJson writes the value as a JSON string, quotes included, so that
 // quotes and line breaks in it cannot break the card.)
-func extraFuncs() map[string]any {
+func extraFuncs(contacts *Contacts) map[string]any {
 	funcs := sprig.TxtFuncMap()
 	// A template must not read the environment of this process: it may
 	// hold secrets, and the card goes to a chat channel.
@@ -242,6 +243,10 @@ func extraFuncs() map[string]any {
 	funcs["urlComponent"] = urlComponent
 	funcs["shortDuration"] = shortDuration
 	funcs["splitWords"] = splitWords
+	// contactsFor .Alerts: the people of the contacts file for the group,
+	// or nil (see Contacts.For). Bound to this template's contacts: the
+	// template keeps the functions it was parsed with.
+	funcs["contactsFor"] = contacts.For
 	// Function literals that call clock when the template runs, not when
 	// the map is built: a test that replaces clock is seen by both.
 	funcs["now"] = func() time.Time { return clock() }

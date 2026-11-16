@@ -51,7 +51,7 @@ func nastyMessage() webhook.Message {
 // them unchanged.
 func Test_defaultTemplate_escapesValues(t *testing.T) {
 	schema := compileCardSchema(t)
-	tmpl, err := ParseTemplateFile(defaultTemplatePath)
+	tmpl, err := ParseTemplateFile(defaultTemplatePath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -238,6 +238,7 @@ func main() { //nolint: funlen
 		// templates escape each value where they use it (mdEscape, toJson).
 		escapeUnderscores             = fs.Bool("auto-escape-underscores", false, "Before rendering, JSON-escape every label and annotation value and replace '_' with '\\_'. Only for templates that do not escape values themselves.")
 		configFile                    = fs.String("config-file", "", "The connectors configuration file.")
+		contactsFile                  = fs.String("contacts-file", "", "A YAML file of the people to name on the cards, by the value of an alert label (see the README). Empty: nobody is named.")
 		httpClientIdleConnTimeout     = fs.Duration("idle-conn-timeout", 90*time.Second, "The HTTP client idle connection timeout duration.")
 		httpClientTLSHandshakeTimeout = fs.Duration("tls-handshake-timeout", 30*time.Second, "The HTTP client TLS handshake timeout.")
 		httpClientMaxIdleConn         = fs.Int("max-idle-conns", 100, "The HTTP client maximum number of idle connections")
@@ -298,7 +299,15 @@ func main() { //nolint: funlen
 		}
 	}
 
-	defaultTemplate, err := card.ParseTemplateFile(*templateFile)
+	var contacts *card.Contacts
+	if *contactsFile != "" {
+		contacts, err = card.LoadContacts(*contactsFile)
+		if err != nil {
+			fatal("invalid configuration", "err", err)
+		}
+	}
+
+	defaultTemplate, err := card.ParseTemplateFile(*templateFile, contacts)
 	if err != nil {
 		fatal("cannot read the template", "template_file", *templateFile, "err", err)
 	}
@@ -328,6 +337,7 @@ func main() { //nolint: funlen
 		maxCardSize:         *maxCardSize,
 		defaultTemplate:     defaultTemplate,
 		defaultTemplateFile: *templateFile,
+		contacts:            contacts,
 		escapeUnderscores:   *escapeUnderscores,
 	}.build(tc)
 	if err != nil {

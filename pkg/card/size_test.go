@@ -20,7 +20,7 @@ const defaultTemplatePath = "../../default-message-workflow-card.tmpl"
 // defaultCard returns the plain converter with the default template.
 func defaultCard(t *testing.T) Converter {
 	t.Helper()
-	tmpl, err := ParseTemplateFile(defaultTemplatePath)
+	tmpl, err := ParseTemplateFile(defaultTemplatePath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func Test_sizeLimiter_off(t *testing.T) {
 // With -auto-escape-underscores the message is escaped in a copy: rendering
 // it twice gives the same card, and the message keeps its values.
 func Test_escapeUnderscores_leavesMessage(t *testing.T) {
-	tmpl, err := ParseTemplateFile(defaultTemplatePath)
+	tmpl, err := ParseTemplateFile(defaultTemplatePath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

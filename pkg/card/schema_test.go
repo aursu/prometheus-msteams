@@ -113,7 +113,7 @@ func Test_cardTemplates_matchAdaptiveCardSchema(t *testing.T) {
 	}
 
 	for _, file := range files {
-		tmpl, err := ParseTemplateFile(file)
+		tmpl, err := ParseTemplateFile(file, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

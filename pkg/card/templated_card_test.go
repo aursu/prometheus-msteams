@@ -34,7 +34,7 @@ func writeTemplate(t *testing.T, body string) string {
 // convert renders templateFile with the sample alert group.
 func convert(t *testing.T, templateFile string) (json.RawMessage, error) {
 	t.Helper()
-	tmpl, err := ParseTemplateFile(templateFile)
+	tmpl, err := ParseTemplateFile(templateFile, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

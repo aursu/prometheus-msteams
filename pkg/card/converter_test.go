@@ -12,7 +12,7 @@ import (
 
 // The full alert and card are logged at debug level only.
 func TestLoggingMiddleware(t *testing.T) {
-	tmpl, err := ParseTemplateFile("../../default-message-workflow-card.tmpl")
+	tmpl, err := ParseTemplateFile("../../default-message-workflow-card.tmpl", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

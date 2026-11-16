@@ -30,6 +30,9 @@ type routeBuilder struct {
 	defaultTemplate     *template.Template
 	defaultTemplateFile string
 	escapeUnderscores   bool // -auto-escape-underscores, for "connectors"
+	// -contacts-file, for the templates of "connectors_with_custom_templates"
+	// (the default template is parsed with it already); nil: nobody.
+	contacts *card.Contacts
 }
 
 // build returns the routes for tc, or the first configuration error. The
@@ -81,7 +84,7 @@ func (b routeBuilder) customRoute(c ConnectorWithCustomTemplate) (transport.Rout
 
 	tmpl, file := b.defaultTemplate, b.defaultTemplateFile
 	if c.TemplateFile != "" {
-		tmpl, err = card.ParseTemplateFile(c.TemplateFile)
+		tmpl, err = card.ParseTemplateFile(c.TemplateFile, b.contacts)
 		if err != nil {
 			return transport.Route{}, fmt.Errorf("request path %s: %w", c.RequestPath, err)
 		}

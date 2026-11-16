@@ -11,7 +11,7 @@ import (
 
 // The functions a card template can use beyond Alertmanager's own.
 func Test_extraFuncs(t *testing.T) {
-	tmpl, err := ParseTemplateFile(writeTemplate(t, `{}`))
+	tmpl, err := ParseTemplateFile(writeTemplate(t, `{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func fixClock(t *testing.T, at time.Time) {
 
 // now and since in a template follow the package clock.
 func Test_clockFuncs(t *testing.T) {
-	tmpl, err := ParseTemplateFile(writeTemplate(t, `{}`))
+	tmpl, err := ParseTemplateFile(writeTemplate(t, `{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func Test_urlComponent(t *testing.T) {
 // The functions are available in templates, also with Alertmanager's own
 // label type (template.KV) as the argument.
 func Test_escapeFuncsInTemplates(t *testing.T) {
-	tmpl, err := ParseTemplateFile(writeTemplate(t, `{}`))
+	tmpl, err := ParseTemplateFile(writeTemplate(t, `{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

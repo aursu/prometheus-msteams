@@ -232,6 +232,7 @@ Memory usage above 90%                        summary, once
 Swap is in use on the node.                   description
 Started 20:34 · firing for 10 min             resolved: Lasted 13 min · 20:34 – 20:47
 alertname: HighMemoryLoad                     the alert name, when the title differs
+Owner: @Ann Lee · Backup: @Jane Doe           who to call; @ when firing and critical
 job        node-exporter                      the labels worth reading
 > Affected instances (3)                      a group, collapsed: one row per alert
 > Troubleshooting       access · check · mitigate     collapsed
@@ -247,6 +248,9 @@ job        node-exporter                      the labels worth reading
   reads `Kube API Error Budget Burn`. The alert name itself, as
   Alertmanager and silences know it, is under the time line:
   `alertname: KubeAPIErrorBudgetBurn`.
+- **Owner and backup**: with a contacts file, the people behind the
+  alert, @mentioned when it fires as critical; see [Owners and
+  @mentions](#owners-and-mentions).
 - **Where** - the line under the title - says what the alert is
   about, general to specific, from these labels when the alert has them
   (for a group, when all its alerts share them). Context reads
@@ -300,6 +304,41 @@ job        node-exporter                      the labels worth reading
 To change what the card shows, copy the template: the lists of hidden
 labels, where-line labels and their titles, Kubernetes object labels and
 row labels are at its top.
+
+### Owners and @mentions
+
+With `-contacts-file`, the card names the people behind what the alert is
+about - its owner and their backup - by the value of one alert label:
+
+```yaml
+label: owner                    # the alert label; default "owner"
+default: platform               # the group of an alert without the label, or
+                                # with a value not listed; optional
+mention_severities: [critical]  # default [critical]; [] never mentions
+groups:
+  platform:
+    primary: [{name: Jane Doe, id: jane@example.org}]
+    backup:  [{name: John Roe, id: john@example.org}]
+  shop:
+    primary: [{name: Ann Lee, id: ann@example.org}]
+    backup:  [{name: Jane Doe, id: jane@example.org}]
+```
+
+`id` is what Teams knows the person by: the user principal name (the Teams
+sign-in name; for some accounts it is not the e-mail address) or the
+Microsoft Entra object id. `name` is what the card shows.
+
+The card reads `Owner: Ann Lee · Backup: Jane Doe` under the time line.
+For a firing alert of a severity in `mention_severities` the names are
+@mentions: Teams notifies the people, and the Activity feed shows the
+card. A resolved card, and a warning, only name them. A group's people
+come from its firing alerts, each person once. The file is read at
+startup and checked: an unknown key, a group with nobody in it, a person
+without a name or an id stop the program. Without the file, the card names
+nobody.
+
+The label is set where the alert is defined: in the rule's `labels`, on a
+probe target, or for all alerts of a Prometheus by alert relabeling.
 
 ### Troubleshooting in the rule
 
@@ -386,6 +425,10 @@ Functions available in templates:
 - `shortDuration`: a duration to the minute, `10 min`, `2 h 5 min`, `3 d 4 h`
 - `splitWords`: a joined name as words, `KubeAPIErrorBudgetBurn` as
   `Kube API Error Budget Burn`, `node_down` as `node down`
+- `contactsFor`: `{{ with contactsFor .Alerts }}` gives the people of the
+  contacts file for the group - `.Primary`, `.Backup` (each a list of
+  `.Name`, `.ID`) and `.Mention` - or nothing, see
+  [Owners and @mentions](#owners-and-mentions)
 - `now` and `since`, as in Alertmanager: `{{ since .StartsAt | shortDuration }}`
 
 Escape each label or annotation value where the template writes it:
@@ -444,6 +487,8 @@ plus the Go runtime and process metrics.
     	Before rendering, JSON-escape every label and annotation value and replace '_' with '\_'. Only for templates that do not escape values themselves.
   -config-file string
     	The connectors configuration file.
+  -contacts-file string
+    	A YAML file of the people to name on the cards, by the value of an alert label (see the README). Empty: nobody is named.
   -debug
     	Set log level to debug mode.
   -http-addr string

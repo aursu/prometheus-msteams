@@ -29,7 +29,7 @@ const (
 // validation on and logs thrown away.
 func newTestBuilder(t *testing.T) routeBuilder {
 	t.Helper()
-	tmpl, err := card.ParseTemplateFile(defaultTemplateFile)
+	tmpl, err := card.ParseTemplateFile(defaultTemplateFile, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

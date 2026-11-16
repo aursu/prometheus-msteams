@@ -26,7 +26,7 @@ type alert struct {
 }
 
 func TestServer(t *testing.T) {
-	tmpl, err := card.ParseTemplateFile("../default-message-workflow-card.tmpl")
+	tmpl, err := card.ParseTemplateFile("../default-message-workflow-card.tmpl", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

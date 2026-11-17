@@ -240,8 +240,8 @@ alertname: HighMemoryLoad                     the alert name, when the title dif
 job        node-exporter                      the labels worth reading
 owner      shop                               the contacts label, last
 contacts: @Ann Lee (primary), @Jane Doe (backup)   who to call; @ when firing and critical
-> Affected instances (3)                      a group, collapsed: one row per alert,
-                                                each with its own > Details
+> Affected instances (3)                      a group, collapsed: one row per alert;
+                                                "> name  title" opens its details
 > Details                                     one alert, collapsed: its details
 > Troubleshooting       access · check · mitigate     collapsed
 > All labels and annotations                 8        collapsed
@@ -413,10 +413,12 @@ the first alert's and says so.
 Some alerts have more to say than a summary: the errors of a failed run,
 the files that fill a disk. The `details` annotation carries that text,
 and `details_title` names it (default "Details"). A firing card shows it
-collapsed, as written, line breaks kept: for one alert as a section of the
-card, in a group under each alert's row - every alert keeps its own, so
-three failing hosts show three different error lists. A resolved card
-leaves it out.
+collapsed, line by line in small monospace on a grey box, each line
+wrapped so that a long one is never cut off: for one alert as a section of
+the card; in a group under each alert's row, opened from the row's first
+line ("> web1  Last run errors") - every alert keeps its own, so three
+failing hosts show three different error lists. A resolved card leaves it
+out.
 
 The text usually comes from another metric of the same target, read with
 a query in the annotation:

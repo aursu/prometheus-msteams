@@ -786,8 +786,14 @@ func Test_defaultCard_detailsOneAlert(t *testing.T) {
 	if visible, _ := body["isVisible"].(bool); visible || body["isVisible"] == nil {
 		t.Error("the details are not collapsed")
 	}
-	if got := findElements(body, "CodeBlock")[0]["codeSnippet"]; got != details {
-		t.Errorf("details = %q, want them as written: %q", got, details)
+	if got, want := textsOf(body), []string{
+		"Puppet: Could not retrieve catalog from remote server: Error 500",
+		`/Stage\[main\]/Web/Package\[nginx\]/ensure: change from 'absent' to 'present' failed`,
+	}; !slices.Equal(got, want) {
+		t.Errorf("details = %q, want one wrapped line each: %q", got, want)
+	}
+	if len(findElements(body, "CodeBlock")) != 0 {
+		t.Error("the details are a CodeBlock, which cuts long lines off")
 	}
 	for _, k := range []string{"details", "details_title"} {
 		if _, ok := factsOf(card)[k]; ok {
@@ -823,10 +829,11 @@ func Test_defaultCard_detailsGroup(t *testing.T) {
 		if body == nil {
 			t.Fatalf("row %d has no details", i)
 		}
-		if got := findElements(body, "CodeBlock")[0]["codeSnippet"]; got != want {
+		if got := textsOf(body); !slices.Equal(got, []string{want}) {
 			t.Errorf("row %d details = %q, want %q", i, got, want)
 		}
-		// The line that opens them switches this row's body and arrows only.
+		// The row's first line opens them - the host's name in it - and
+		// switches this row's body and arrows only.
 		targets := []any{id + "-body", id + "-closed", id + "-open"}
 		var opener map[string]any
 		for _, cs := range findElements(card, "ColumnSet") {
@@ -836,11 +843,19 @@ func Test_defaultCard_detailsGroup(t *testing.T) {
 			}
 		}
 		if opener == nil {
-			t.Errorf("row %d has no line that opens its details", i)
+			t.Fatalf("row %d has no line that opens its details", i)
+		}
+		host := fmt.Sprintf("web%d", i+1)
+		if texts := textsOf(opener); !slices.Contains(texts, host) || !slices.Contains(texts, "Last run errors") {
+			t.Errorf("row %d's opener = %q, want the host %s and the details' title", i, texts, host)
 		}
 	}
 	if findByID(card, "details-2-body") != nil {
 		t.Error("a row without details has a details body")
+	}
+	// A row without details is named by a plain line.
+	if !slices.Contains(textsOf(card), "web3") {
+		t.Errorf("the row without details lost its name: %q", textsOf(card))
 	}
 }
 

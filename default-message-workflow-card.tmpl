@@ -12,8 +12,8 @@
     alertname: AlertName                       when the title reads differently
     facts                                      the labels worth reading, owner last
     contacts: @Jane Doe (primary), @John Roe (backup)   from the contacts file; @ only critical
-    > Affected pods (N)                        a group, collapsed: one row per alert,
-                                                 each row with its own > details
+    > Affected pods (N)                        a group, collapsed: one row per alert;
+                                                 "> name  details title" opens its details
     > Details                                  one alert, collapsed: its details
     > Troubleshooting                          collapsed: access, check, mitigate
     > All labels and annotations               collapsed
@@ -61,10 +61,12 @@
       "dashboard_url" "alert_url" "details" "details_title" -}}
 {{- /* An alert's details: a longer text of its own that the rule fills in
        (for example the error messages of a failed run, read with a query in
-       the rule's annotation), titled by details_title. Shown as written,
-       line breaks kept, collapsed: for one alert as a section of the card,
-       in a group under the alert's row, so each alert keeps its own. Only on
-       a firing card. */ -}}
+       the rule's annotation), titled by details_title. Shown line by line
+       in small monospace on a grey box, each line wrapped - a long line is
+       never cut off (a CodeBlock would cut it and number the lines) -
+       collapsed: for one alert as a section of the card, in a group under
+       the alert's row, opened from the row's first line, so each alert
+       keeps its own. Only on a firing card. */ -}}
 {{- $detailsTitle := "Details" -}}
 {{- /* The Adaptive Card time functions take RFC 3339 times. */ -}}
 {{- $rfc3339 := "2006-01-02T15:04:05Z07:00" -}}
@@ -276,35 +278,42 @@
          is still the alert itself. */ -}}
   {{- range $i, $alert := .Alerts -}}
     {{- $what := list -}}
+    {{- $name := dict -}}
     {{- if $rowKey -}}
       {{- $rowText := index .Labels $rowKey | mdEscape -}}
       {{- if not $sharedDashboard }}{{ with index .Annotations "dashboard_url" | trim }}{{ $rowText = printf "[%s](%s)" $rowText . }}{{ end }}{{ end -}}
-      {{- $what = append $what (dict "type" "TextBlock" "text" $rowText "fontType" "Monospace" "wrap" true) -}}
+      {{- $name = dict "type" "TextBlock" "text" $rowText "fontType" "Monospace" "wrap" true -}}
+    {{- end -}}
+    {{- /* Its details, collapsed under the row. The row's first line opens
+           them: an arrow, the row's name, and the details' title, small and
+           grey. The ids carry the row's position, so each row opens its own. */ -}}
+    {{- $details := "" -}}
+    {{- if eq .Status "firing" }}{{ $details = index .Annotations "details" | trim }}{{ end -}}
+    {{- $id := printf "details-%d" $i -}}
+    {{- if $details -}}
+      {{- $title := index .Annotations "details_title" | trim | default $detailsTitle -}}
+      {{- $columns := list (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "items" (list
+            (dict "type" "TextBlock" "id" (printf "%s-closed" $id) "text" "▸" "size" "Small")
+            (dict "type" "TextBlock" "id" (printf "%s-open" $id) "text" "▾" "size" "Small" "isVisible" false "spacing" "None"))) -}}
+      {{- with $name }}{{ $columns = append $columns (dict "type" "Column" "width" "auto" "verticalContentAlignment" "Center" "items" (list .)) }}{{ end -}}
+      {{- $columns = append $columns (dict "type" "Column" "width" "stretch" "verticalContentAlignment" "Center" "items" (list
+            (dict "type" "TextBlock" "text" (mdEscape $title) "size" "Small" "isSubtle" true "wrap" true))) -}}
+      {{- $what = append $what (dict "type" "ColumnSet" "spacing" "None"
+            "selectAction" (dict "type" "Action.ToggleVisibility" "title" $title
+                "targetElements" (list (printf "%s-body" $id) (printf "%s-closed" $id) (printf "%s-open" $id)))
+            "columns" $columns) -}}
+    {{- else if $name -}}
+      {{- $what = append $what $name -}}
     {{- end -}}
     {{- /* Each alert's own summary, when the group has none in common. */ -}}
     {{- if not $summary -}}
       {{- with index .Annotations "summary" }}{{ $what = append $what (dict "type" "TextBlock" "text" (mdEscape .) "wrap" true "isSubtle" true "spacing" "None") }}{{ end -}}
     {{- end -}}
     {{- if not $what }}{{ $what = append $what (dict "type" "TextBlock" "text" (index .Labels "alertname" | mdEscape) "wrap" true) }}{{ end -}}
-    {{- /* Its details, collapsed under the row: a line that opens them, and
-           the text. The ids carry the row's position, so each row opens its
-           own. */ -}}
-    {{- $details := index .Annotations "details" | trim -}}
-    {{- if and $details (eq .Status "firing") -}}
-      {{- $id := printf "details-%d" $i -}}
-      {{- $title := index .Annotations "details_title" | trim | default $detailsTitle -}}
-      {{- $what = append $what (dict "type" "ColumnSet" "spacing" "Small"
-            "selectAction" (dict "type" "Action.ToggleVisibility" "title" $title
-                "targetElements" (list (printf "%s-body" $id) (printf "%s-closed" $id) (printf "%s-open" $id)))
-            "columns" (list
-                (dict "type" "Column" "width" "auto" "items" (list
-                    (dict "type" "TextBlock" "id" (printf "%s-closed" $id) "text" "▸" "size" "Small")
-                    (dict "type" "TextBlock" "id" (printf "%s-open" $id) "text" "▾" "size" "Small" "isVisible" false "spacing" "None")))
-                (dict "type" "Column" "width" "stretch" "items" (list
-                    (dict "type" "TextBlock" "text" (mdEscape $title) "size" "Small" "wrap" true))))) -}}
-      {{- $what = append $what (dict "type" "Container" "id" (printf "%s-body" $id) "isVisible" false "items" (list
-            (dict "type" "CodeBlock" "codeSnippet" $details "language" "PlainText"
-                  "fallback" (dict "type" "TextBlock" "text" (mdEscape $details) "fontType" "Monospace" "wrap" true)))) -}}
+    {{- if $details -}}
+      {{- $lines := list -}}
+      {{- range splitList "\n" $details }}{{ if trim . }}{{ $lines = append $lines (dict "type" "TextBlock" "text" (trimSuffix "\r" . | mdEscape) "fontType" "Monospace" "size" "Small" "wrap" true "spacing" "Small") }}{{ end }}{{ end -}}
+      {{- $what = append $what (dict "type" "Container" "id" (printf "%s-body" $id) "isVisible" false "style" "emphasis" "spacing" "Small" "items" $lines) -}}
     {{- end -}}
     {{- $since := "resolved" -}}
     {{- if eq .Status "firing" }}{{ $since = printf "{{TIME(%s)}}" (dateInZone $rfc3339 .StartsAt "UTC") }}{{ end -}}
@@ -338,9 +347,10 @@
 {{- if and $firing $one -}}
   {{- with index $first.Annotations "details" | trim -}}
     {{- $title := index $first.Annotations "details_title" | trim | default $detailsTitle -}}
+    {{- $lines := list -}}
+    {{- range splitList "\n" . }}{{ if trim . }}{{ $lines = append $lines (dict "type" "TextBlock" "text" (trimSuffix "\r" . | mdEscape) "fontType" "Monospace" "size" "Small" "wrap" true "spacing" "Small") }}{{ end }}{{ end -}}
     {{- $sections = append $sections (dict "id" "alert-details" "title" $title "icon" "DocumentText" "hint" "" "items" (list
-          (dict "type" "CodeBlock" "codeSnippet" . "language" "PlainText"
-                "fallback" (dict "type" "TextBlock" "text" (mdEscape .) "fontType" "Monospace" "wrap" true)))) -}}
+          (dict "type" "Container" "style" "emphasis" "items" $lines))) -}}
   {{- end -}}
 {{- end -}}
 

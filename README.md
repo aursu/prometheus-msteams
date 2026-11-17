@@ -240,7 +240,9 @@ alertname: HighMemoryLoad                     the alert name, when the title dif
 job        node-exporter                      the labels worth reading
 owner      shop                               the contacts label, last
 contacts: @Ann Lee (primary), @Jane Doe (backup)   who to call; @ when firing and critical
-> Affected instances (3)                      a group, collapsed: one row per alert
+> Affected instances (3)                      a group, collapsed: one row per alert,
+                                                each with its own > Details
+> Details                                     one alert, collapsed: its details
 > Troubleshooting       access · check · mitigate     collapsed
 > All labels and annotations                 8        collapsed
 [Dashboard] [Alert rule] [Alertmanager] [Silence] [Runbook] [Graph]
@@ -290,10 +292,12 @@ contacts: @Ann Lee (primary), @Jane Doe (backup)   who to call; @ when firing an
   annotations".
 - **A group** lists its alerts in a collapsed section, as a table that
   scrolls past about six rows - also on a resolved card. The first column
-  is the first of the labels `instance`, `pod`, `name`, `job`, `container`
-  that the alerts do not all share, and it names the section with the
-  count: "Affected pods (12)"; "Alerts (2)" when none of them differs. When
-  the alerts have different summaries, each row shows its own.
+  is the first of the labels `host`, `instance`, `pod`, `name`, `job`,
+  `container` that the alerts do not all share, and it names the section
+  with the count: "Affected pods (12)"; "Alerts (2)" when none of them
+  differs. When the alerts have different summaries, each row shows its
+  own; each alert's details open under its row (see [Details in the
+  rule](#details-in-the-rule)).
 - **Buttons**: Dashboard (annotation `dashboard_url`: the dashboard of what
   the alert is about), Alert rule (annotation `alert_url`: where the rule
   is defined, e.g. in Grafana), Alertmanager (the group's alerts), Silence
@@ -403,6 +407,36 @@ the card are ready to run. `access` and `mitigate` are markdown written by
 you and are not escaped; escape `_` and `*` yourself where they must show
 as they are. In a group whose alerts have different steps, the card shows
 the first alert's and says so.
+
+### Details in the rule
+
+Some alerts have more to say than a summary: the errors of a failed run,
+the files that fill a disk. The `details` annotation carries that text,
+and `details_title` names it (default "Details"). A firing card shows it
+collapsed, as written, line breaks kept: for one alert as a section of the
+card, in a group under each alert's row - every alert keeps its own, so
+three failing hosts show three different error lists. A resolved card
+leaves it out.
+
+The text usually comes from another metric of the same target, read with
+a query in the annotation:
+
+```yaml
+- alert: PuppetRunFailing
+  expr: max without (__name__) ({__name__=~"puppet_last_run_failed|puppet_catalog_from_cache"}) == 1
+  for: 3h
+  annotations:
+    summary: "{{ $labels.host }}: Puppet runs keep failing"
+    details_title: "Last run errors"
+    details: |-
+      {{ range printf "puppet_last_run_error_info{instance='%s'}" $labels.instance | query -}}
+      {{ .Labels.source }}: {{ .Labels.message }}
+      {{ end }}
+```
+
+Keep it bounded: the card has a size limit (see [Large alert
+groups](#large-alert-groups)), and a group that does not fit loses alerts
+from the card.
 
 ## Card templates
 

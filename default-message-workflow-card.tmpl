@@ -12,7 +12,9 @@
     alertname: AlertName                       when the title reads differently
     facts                                      the labels worth reading, owner last
     contacts: @Jane Doe (primary), @John Roe (backup)   from the contacts file; @ only critical
-    > Affected pods (N)                        a group, collapsed: one row per alert
+    > Affected pods (N)                        a group, collapsed: one row per alert,
+                                                 each row with its own > details
+    > Details                                  one alert, collapsed: its details
     > Troubleshooting                          collapsed: access, check, mitigate
     > All labels and annotations               collapsed
     [Dashboard] [Alert rule] [Alertmanager] [Silence] [Runbook] [Graph]
@@ -52,11 +54,18 @@
       (list "horizontalpodautoscaler" "HorizontalPodAutoscaler") (list "pod" "Pod") (list "node" "Node") -}}
 {{- /* In a group, the label that tells the alerts apart: the first of these
        that the alerts do not all share. It heads the table's first column. */ -}}
-{{- $rowLabels := stringSlice "instance" "pod" "name" "job" "container" -}}
+{{- $rowLabels := stringSlice "host" "instance" "pod" "name" "job" "container" -}}
 {{- /* Annotations shown in their own place, so not repeated under "All
        labels and annotations". */ -}}
 {{- $shownAnnotations := stringSlice "title" "summary" "description" "access" "check" "mitigate" "runbook_url" "runbook"
-      "dashboard_url" "alert_url" -}}
+      "dashboard_url" "alert_url" "details" "details_title" -}}
+{{- /* An alert's details: a longer text of its own that the rule fills in
+       (for example the error messages of a failed run, read with a query in
+       the rule's annotation), titled by details_title. Shown as written,
+       line breaks kept, collapsed: for one alert as a section of the card,
+       in a group under the alert's row, so each alert keeps its own. Only on
+       a firing card. */ -}}
+{{- $detailsTitle := "Details" -}}
 {{- /* The Adaptive Card time functions take RFC 3339 times. */ -}}
 {{- $rfc3339 := "2006-01-02T15:04:05Z07:00" -}}
 
@@ -263,7 +272,9 @@
   {{- $rows := list (dict "type" "TableRow" "cells" (list
         (dict "type" "TableCell" "items" (list (dict "type" "TextBlock" "text" ($rowKey | default "alert") "weight" "Bolder")))
         (dict "type" "TableCell" "items" (list (dict "type" "TextBlock" "text" "since" "weight" "Bolder" "horizontalAlignment" "Right"))))) -}}
-  {{- range .Alerts -}}
+  {{- /* range with two variables: $i is the alert's position, and the dot
+         is still the alert itself. */ -}}
+  {{- range $i, $alert := .Alerts -}}
     {{- $what := list -}}
     {{- if $rowKey -}}
       {{- $rowText := index .Labels $rowKey | mdEscape -}}
@@ -275,6 +286,26 @@
       {{- with index .Annotations "summary" }}{{ $what = append $what (dict "type" "TextBlock" "text" (mdEscape .) "wrap" true "isSubtle" true "spacing" "None") }}{{ end -}}
     {{- end -}}
     {{- if not $what }}{{ $what = append $what (dict "type" "TextBlock" "text" (index .Labels "alertname" | mdEscape) "wrap" true) }}{{ end -}}
+    {{- /* Its details, collapsed under the row: a line that opens them, and
+           the text. The ids carry the row's position, so each row opens its
+           own. */ -}}
+    {{- $details := index .Annotations "details" | trim -}}
+    {{- if and $details (eq .Status "firing") -}}
+      {{- $id := printf "details-%d" $i -}}
+      {{- $title := index .Annotations "details_title" | trim | default $detailsTitle -}}
+      {{- $what = append $what (dict "type" "ColumnSet" "spacing" "Small"
+            "selectAction" (dict "type" "Action.ToggleVisibility" "title" $title
+                "targetElements" (list (printf "%s-body" $id) (printf "%s-closed" $id) (printf "%s-open" $id)))
+            "columns" (list
+                (dict "type" "Column" "width" "auto" "items" (list
+                    (dict "type" "TextBlock" "id" (printf "%s-closed" $id) "text" "▸" "size" "Small")
+                    (dict "type" "TextBlock" "id" (printf "%s-open" $id) "text" "▾" "size" "Small" "isVisible" false "spacing" "None")))
+                (dict "type" "Column" "width" "stretch" "items" (list
+                    (dict "type" "TextBlock" "text" (mdEscape $title) "size" "Small" "wrap" true))))) -}}
+      {{- $what = append $what (dict "type" "Container" "id" (printf "%s-body" $id) "isVisible" false "items" (list
+            (dict "type" "CodeBlock" "codeSnippet" $details "language" "PlainText"
+                  "fallback" (dict "type" "TextBlock" "text" (mdEscape $details) "fontType" "Monospace" "wrap" true)))) -}}
+    {{- end -}}
     {{- $since := "resolved" -}}
     {{- if eq .Status "firing" }}{{ $since = printf "{{TIME(%s)}}" (dateInZone $rfc3339 .StartsAt "UTC") }}{{ end -}}
     {{- $rows = append $rows (dict "type" "TableRow" "cells" (list
@@ -301,6 +332,17 @@
 {{- end -}}
 
 {{- /* ---- Collapsed sections for a firing group --------------------------- */ -}}
+
+{{- /* One alert's details: a section of their own (a group shows each
+       alert's under its row, above). */ -}}
+{{- if and $firing $one -}}
+  {{- with index $first.Annotations "details" | trim -}}
+    {{- $title := index $first.Annotations "details_title" | trim | default $detailsTitle -}}
+    {{- $sections = append $sections (dict "id" "alert-details" "title" $title "icon" "DocumentText" "hint" "" "items" (list
+          (dict "type" "CodeBlock" "codeSnippet" . "language" "PlainText"
+                "fallback" (dict "type" "TextBlock" "text" (mdEscape .) "fontType" "Monospace" "wrap" true)))) -}}
+  {{- end -}}
+{{- end -}}
 
 {{- /* Troubleshooting, from the rule's annotations: access (where to look,
        how to get in), check (shell commands that confirm the problem),

@@ -744,3 +744,112 @@ func Test_defaultCard_title(t *testing.T) {
 		})
 	}
 }
+
+// hostAlert is a firing alert about one host, with its own details.
+func hostAlert(host, instance, details string) template.Alert {
+	labels := template.KV{"alertname": "PuppetRunFailing", "severity": "warning", "job": "hosts",
+		"host": host, "instance": instance}
+	ann := template.KV{"summary": host + ": runs keep failing"}
+	if details != "" {
+		ann["details"] = details
+		ann["details_title"] = "Last run errors"
+	}
+	return alertAt("firing", 5, labels, ann)
+}
+
+// sectionHeading returns the heading line (the ColumnSet that opens or
+// closes something) with the given title, or nil.
+func sectionHeading(card map[string]any, title string) map[string]any {
+	for _, cs := range findElements(card, "ColumnSet") {
+		if sa, _ := cs["selectAction"].(map[string]any); sa != nil && sa["title"] == title {
+			return cs
+		}
+	}
+	return nil
+}
+
+// The details annotation: for one alert a collapsed section of its own,
+// titled by details_title, the text kept as written; never repeated under
+// All labels and annotations.
+func Test_defaultCard_detailsOneAlert(t *testing.T) {
+	details := "Puppet: Could not retrieve catalog from remote server: Error 500\n" +
+		"/Stage[main]/Web/Package[nginx]/ensure: change from 'absent' to 'present' failed"
+	card := renderDefault(t, group("firing", hostAlert("web1", "10.0.0.1:9100", details)))
+
+	if sectionHeading(card, "Last run errors") == nil {
+		t.Fatalf("no section titled by details_title: %q", textsOf(card))
+	}
+	body := findByID(card, "alert-details-body")
+	if body == nil {
+		t.Fatal("no details section body")
+	}
+	if visible, _ := body["isVisible"].(bool); visible || body["isVisible"] == nil {
+		t.Error("the details are not collapsed")
+	}
+	if got := findElements(body, "CodeBlock")[0]["codeSnippet"]; got != details {
+		t.Errorf("details = %q, want them as written: %q", got, details)
+	}
+	for _, k := range []string{"details", "details_title"} {
+		if _, ok := factsOf(card)[k]; ok {
+			t.Errorf("%s is repeated under All labels and annotations", k)
+		}
+	}
+
+	// Without details_title the section is called Details.
+	plain := hostAlert("web1", "10.0.0.1:9100", details)
+	delete(plain.Annotations, "details_title")
+	if sectionHeading(renderDefault(t, group("firing", plain)), "Details") == nil {
+		t.Error("no section titled Details without details_title")
+	}
+}
+
+// A group: each alert's details under its own row, opened by its own line;
+// the rows named by host; no card-level details section.
+func Test_defaultCard_detailsGroup(t *testing.T) {
+	card := renderDefault(t, group("firing",
+		hostAlert("web1", "10.0.0.1:9100", "web1: error one"),
+		hostAlert("web2", "10.0.0.2:9100", "web2: error two"),
+		hostAlert("web3", "10.0.0.3:9100", "")))
+
+	if sectionHeading(card, "Affected hosts (3)") == nil {
+		t.Errorf("the rows are not named by host: %q", textsOf(card))
+	}
+	if findByID(card, "alert-details-body") != nil {
+		t.Error("a group has a card-level details section")
+	}
+	for i, want := range []string{"web1: error one", "web2: error two"} {
+		id := fmt.Sprintf("details-%d", i)
+		body := findByID(card, id+"-body")
+		if body == nil {
+			t.Fatalf("row %d has no details", i)
+		}
+		if got := findElements(body, "CodeBlock")[0]["codeSnippet"]; got != want {
+			t.Errorf("row %d details = %q, want %q", i, got, want)
+		}
+		// The line that opens them switches this row's body and arrows only.
+		targets := []any{id + "-body", id + "-closed", id + "-open"}
+		var opener map[string]any
+		for _, cs := range findElements(card, "ColumnSet") {
+			sa, _ := cs["selectAction"].(map[string]any)
+			if sa != nil && slices.Equal(sa["targetElements"].([]any), targets) {
+				opener = cs
+			}
+		}
+		if opener == nil {
+			t.Errorf("row %d has no line that opens its details", i)
+		}
+	}
+	if findByID(card, "details-2-body") != nil {
+		t.Error("a row without details has a details body")
+	}
+}
+
+// A resolved card shows no details: they describe a problem that is over.
+func Test_defaultCard_detailsResolved(t *testing.T) {
+	a := hostAlert("web1", "10.0.0.1:9100", "web1: error one")
+	a.Status, a.EndsAt = "resolved", cardNow
+	card := renderDefault(t, group("resolved", a))
+	if findByID(card, "alert-details-body") != nil || strings.Contains(strings.Join(textsOf(card), "\n"), "Last run errors") {
+		t.Error("a resolved card shows the details")
+	}
+}
